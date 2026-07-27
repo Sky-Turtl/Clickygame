@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0d12">
+<title>Clicky — claim the clock</title>
+<link rel="stylesheet" href="css/styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⏱️</text></svg>">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ================= SETUP ================= -->
+  <section class="screen" id="screen-setup">
+    <header class="brand">
+      <h1>⏱️ Clicky</h1>
+      <p class="tagline">Whoever clicks, claims the time since the last click.</p>
+    </header>
+
+    <div id="config-warning" class="banner banner-error hidden">
+      <strong>Firebase isn't configured yet.</strong>
+      <span>Open <code>js/config.js</code> and paste your project config. See the README.</span>
+    </div>
+
+    <div class="card">
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="new" role="tab">New game</button>
+        <button class="tab" data-tab="join" role="tab">Join a game</button>
+      </div>
+
+      <!-- New game -->
+      <form class="tabpanel active" id="panel-new" autocomplete="off">
+        <label>
+          Your name
+          <input type="text" id="new-name" maxlength="24" placeholder="e.g. Will" required>
+        </label>
+        <label>
+          Game name <span class="opt">optional</span>
+          <input type="text" id="new-gamename" maxlength="40" placeholder="e.g. The Long War">
+        </label>
+        <label>
+          Ends on
+          <input type="date" id="new-enddate" required>
+          <small>Whoever has claimed the most time when the deadline hits wins. Ends at
+          23:59 your local time on that date.</small>
+        </label>
+
+        <details class="advanced">
+          <summary>Discord notifications <span class="opt">optional</span></summary>
+          <label>
+            Webhook URL
+            <input type="url" id="new-webhook" placeholder="https://discord.com/api/webhooks/...">
+            <small>Discord → Server Settings → Integrations → Webhooks → New Webhook → Copy URL.
+            Stored in the game record, not in the page source.</small>
+          </label>
+          <label>
+            Your Discord user ID <span class="opt">optional</span>
+            <input type="text" id="new-discordid" inputmode="numeric" placeholder="e.g. 210983712834">
+            <small>So the other player gets @mentioned when you claim. Enable Developer Mode in
+            Discord, then right-click yourself → Copy User ID.</small>
+          </label>
+        </details>
+
+        <button type="submit" class="btn btn-primary btn-lg">Create game</button>
+        <p class="form-error hidden" id="new-error"></p>
+      </form>
+
+      <!-- Join -->
+      <form class="tabpanel" id="panel-join" autocomplete="off">
+        <label>
+          Game code
+          <input type="text" id="join-code" maxlength="6" placeholder="ABC123"
+                 class="code-input" autocapitalize="characters" spellcheck="false" required>
+        </label>
+        <label>
+          Your name
+          <input type="text" id="join-name" maxlength="24" placeholder="e.g. Sam" required>
+        </label>
+
+        <details class="advanced">
+          <summary>Discord user ID <span class="opt">optional</span></summary>
+          <label>
+            <input type="text" id="join-discordid" inputmode="numeric" placeholder="e.g. 210983712834">
+            <small>So you get @mentioned when the other player claims.</small>
+          </label>
+        </details>
+
+        <button type="submit" class="btn btn-primary btn-lg">Join game</button>
+        <p class="form-error hidden" id="join-error"></p>
+      </form>
+    </div>
+
+    <p class="footnote">
+      Two players, one shared clock. Every second that passes belongs to whoever clicks next.
+    </p>
+  </section>
+
+  <!-- ================= HUB ================= -->
+  <section class="screen hidden" id="screen-hub">
+    <header class="topbar">
+      <div class="topbar-left">
+        <span class="conn" id="conn-dot" title="Connection"></span>
+        <span class="game-title">⏱️ Clicky</span>
+      </div>
+      <div class="topbar-right">
+        <button class="btn btn-ghost" id="btn-add">+ Game</button>
+        <button class="btn btn-ghost" id="btn-settings" title="Settings">⚙</button>
+      </div>
+    </header>
+
+    <div id="hub-banners"></div>
+
+    <!-- The one button -->
+    <div class="clock-card">
+      <div class="clock-label" id="clock-label">On the clock</div>
+      <div class="clock" id="clock">0s</div>
+      <div class="clock-sub" id="clock-sub"></div>
+
+      <button class="btn-claim" id="btn-claim">
+        <span class="btn-claim-text">CLAIM</span>
+        <span class="btn-claim-sub" id="btn-claim-sub"></span>
+      </button>
+      <p class="claim-note" id="claim-note"></p>
+    </div>
+
+    <div class="section-head">
+      <h2>Your games</h2>
+      <span class="section-hint" id="sync-hint"></span>
+    </div>
+
+    <div id="game-list" class="game-list"></div>
+
+    <p class="footnote">
+      Toggle <strong>sync</strong> on a game to include it in every claim. One click, banked in
+      every synced game at once — each against its own clock.
+    </p>
+  </section>
+
+  <!-- ================= GAME DETAIL / SUMMARY ================= -->
+  <section class="screen hidden" id="screen-detail">
+    <header class="topbar">
+      <div class="topbar-left">
+        <button class="btn btn-ghost" id="btn-back">←</button>
+        <span class="game-title" id="detail-title">Game</span>
+      </div>
+      <div class="topbar-right">
+        <button class="code-chip" id="code-chip" title="Copy the game code">
+          <span id="code-text">------</span><span class="copy-hint">copy</span>
+        </button>
+      </div>
+    </header>
+
+    <div id="detail-banners"></div>
+
+    <div class="card">
+      <h2 class="card-title">Standings</h2>
+      <p class="card-sub" id="detail-deadline"></p>
+      <div class="scores" id="detail-scores"></div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Claimed time by period</h2>
+      <p class="card-sub">
+        <strong>Claimed</strong> counts the 2x bonus and decides the winner.
+        <strong>Actual</strong> is real wall-clock time that was on the board.
+      </p>
+      <div class="table-scroll">
+        <table class="summary-table" id="summary-table"></table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Game totals</h2>
+      <div class="stat-grid" id="stat-grid"></div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Today's 2x windows</h2>
+      <p class="card-sub">Each game rolls its own windows — they won't line up across games.</p>
+      <div id="windows-list" class="windows-list"></div>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Recent claims</h2>
+      <ul class="feed" id="feed"><li class="feed-empty">No claims yet.</li></ul>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Discord webhook</h2>
+      <p class="card-sub">Shared by both players in this game. Leave blank to disable.</p>
+      <form id="webhook-form" autocomplete="off">
+        <label>
+          <input type="url" id="detail-webhook" placeholder="https://discord.com/api/webhooks/...">
+        </label>
+        <button type="submit" class="btn btn-ghost">Save webhook</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <button class="btn btn-ghost btn-lg" id="btn-leave">Leave this game</button>
+    </div>
+  </section>
+
+</div>
+
+<!-- ================= RPS MODAL ================= -->
+<div class="modal-backdrop hidden" id="rps-modal">
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rps-title">
+    <h2 id="rps-title">⚔️ Contested claim</h2>
+    <p class="duel-game" id="rps-game"></p>
+    <p class="modal-sub" id="rps-sub"></p>
+
+    <div class="pot" id="rps-pot"></div>
+
+    <div class="throws" id="rps-throws">
+      <button class="throw" data-throw="rock"><span>🪨</span>Rock</button>
+      <button class="throw" data-throw="paper"><span>📄</span>Paper</button>
+      <button class="throw" data-throw="scissors"><span>✂️</span>Scissors</button>
+    </div>
+
+    <p class="modal-status" id="rps-status"></p>
+    <div class="rps-result hidden" id="rps-result"></div>
+    <div class="modal-actions" id="rps-actions">
+      <div class="spacer"></div>
+      <button type="button" class="btn btn-ghost hidden" id="rps-dismiss">Close</button>
+    </div>
+    <p class="modal-lock" id="rps-lock">You can't claim again until you've thrown.</p>
+  </div>
+</div>
+
+<!-- ================= SETTINGS MODAL ================= -->
+<div class="modal-backdrop hidden" id="settings-modal">
+  <div class="modal">
+    <h2>Settings</h2>
+    <form id="settings-form" autocomplete="off">
+      <label>
+        Your name <span class="opt">applies to every game</span>
+        <input type="text" id="set-name" maxlength="24">
+      </label>
+      <label>
+        Your Discord user ID
+        <input type="text" id="set-discordid" inputmode="numeric" placeholder="optional">
+      </label>
+      <div class="modal-actions">
+        <div class="spacer"></div>
+        <button type="button" class="btn btn-ghost" id="settings-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<div id="toast-host" class="toast-host"></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

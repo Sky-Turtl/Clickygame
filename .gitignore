@@ -1,0 +1,8 @@
+# Editor / tooling config, not part of the site
+.claude/
+.vscode/
+.idea/
+
+node_modules/
+.DS_Store
+Thumbs.db
