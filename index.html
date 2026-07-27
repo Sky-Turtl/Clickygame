@@ -48,6 +48,22 @@
         </label>
 
         <details class="advanced">
+          <summary>Start from existing data <span class="opt">optional</span></summary>
+          <label>
+            Paste your log
+            <textarea id="new-import" rows="6" spellcheck="false"
+              placeholder="3600&#9;0%&#9;Will&#10;3500&#9;2.8%&#9;Sam"></textarea>
+            <small>
+              Paste a countdown log — one row per click with the <strong>time remaining</strong>,
+              the <strong>percent elapsed</strong>, and <strong>who clicked</strong>, in any column
+              order. Tabs, commas or spaces all work, and a header row is fine. Also accepts
+              <code>Name: 1h 30m</code> totals or a JSON export.
+            </small>
+          </label>
+          <div class="import-preview hidden" id="import-preview"></div>
+        </details>
+
+        <details class="advanced">
           <summary>Discord notifications <span class="opt">optional</span></summary>
           <label>
             Webhook URL
@@ -162,6 +178,43 @@
       <div class="stat-grid" id="hub-stat-grid"></div>
     </div>
 
+    <!-- Per-click bars -->
+    <div class="card">
+      <div class="chart-head">
+        <h2 class="card-title">Every claim</h2>
+        <div class="seg" role="group" aria-label="Sort claims">
+          <button class="seg-btn active" data-clicksort="time">Order clicked</button>
+          <button class="seg-btn" data-clicksort="size">Size</button>
+        </div>
+      </div>
+      <div id="chart-clicks-legend"></div>
+      <div class="chart-wrap" id="chart-clicks"></div>
+      <p class="chart-note">Each bar is one claim. A gold cap marks a 2x claim.</p>
+    </div>
+
+    <!-- Who's winning -->
+    <div class="card">
+      <div class="chart-head">
+        <h2 class="card-title">Who's winning</h2>
+        <div class="chart-controls">
+          <select id="bucket-size" class="scope-select" aria-label="Time bucket">
+            <option value="1m">Per minute</option>
+            <option value="30m">Per half hour</option>
+            <option value="1h" selected>Per hour</option>
+            <option value="6h">Per 6 hours</option>
+            <option value="1d">Per day</option>
+          </select>
+          <div class="seg" role="group" aria-label="Chart style">
+            <button class="seg-btn active" data-leadstyle="area">Line</button>
+            <button class="seg-btn" data-leadstyle="candle">Candles</button>
+          </div>
+        </div>
+      </div>
+      <div id="chart-lead-legend"></div>
+      <div class="chart-wrap" id="chart-lead"></div>
+      <p class="chart-note" id="chart-lead-note"></p>
+    </div>
+
     <p class="footnote">
       Toggle <strong>sync</strong> on a game to include it in every claim. One click, banked in
       every synced game at once — each against its own clock.
@@ -216,6 +269,15 @@
     <div class="card">
       <h2 class="card-title">Recent claims</h2>
       <ul class="feed" id="feed"><li class="feed-empty">No claims yet.</li></ul>
+    </div>
+
+    <div class="card">
+      <h2 class="card-title">Export</h2>
+      <p class="card-sub">
+        Copies this game's full claim history as JSON. Paste it into a new game's
+        "Start from existing data" to carry the history over.
+      </p>
+      <button class="btn btn-ghost" id="btn-export">Copy game data</button>
     </div>
 
     <div class="card">

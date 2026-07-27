@@ -13,6 +13,64 @@ clicks **CLAIM** next. Whoever has banked the most time when the deadline hits, 
   game at once, each against its own separate clock.
 - **Discord** — optional webhook posts when the other player claims, when a 2x
   window opens, and when a duel starts or resolves.
+- **Charts** — every claim as a bar (sortable by when it happened or how big it
+  was), and a running "who's winning" chart bucketed by minute, half hour, hour,
+  6 hours or day, as a line or as candlesticks.
+- **Import** — start a game from data you already have, including a countdown log.
+
+---
+
+## Starting from existing data
+
+When you create a game, open **Start from existing data** and paste your history.
+Three formats are accepted, detected automatically.
+
+### Countdown log
+
+A row per click: **time remaining**, **percent elapsed**, and **who clicked**, in
+any column order. Tabs, commas or multiple spaces all work, and a header row is
+fine.
+
+```
+remaining   percent   who
+604800      0%        Will
+601200      0.6%      Sam
+598000      1.1%      Will
+```
+
+The claim for each click is the **drop in remaining** since the previous click —
+which is exactly this game's mechanic, so the conversion is exact rather than an
+approximation. Timestamps come out absolute (a row with `R` seconds remaining
+happened at `endsAt − R`), so imported history sits on the same timeline as live
+play and the charts read straight across the join.
+
+The percent column is what recovers the original total, and the total is what
+fixes the **first** click's claim — without it there's no way to know how much
+time preceded row one, so that first click is counted as 0 and the app says so.
+The total is taken as the median of every row's implied total, so one inconsistent
+row won't skew it.
+
+Time values can be raw seconds (`604800`) or durations (`7d`, `2h 30m`, `1:30:00`).
+
+### Totals
+
+```
+Will: 3h 20m
+Sam = 2h 05m 30s
+```
+
+### JSON
+
+Whatever the **Copy game data** button on a game's page produces. This is the only
+format that round-trips the full per-claim history including 2x multipliers and
+duel wins.
+
+### How players are matched
+
+The first player listed is you — unless one of the names matches the name you
+typed, in which case that one is. Your opponent has no player id until they join,
+so their history is parked on the game and applied automatically the moment they
+enter the code.
 
 ---
 
@@ -198,6 +256,9 @@ css/styles.css      all styling
 js/config.js        Firebase config + tuning constants   <- you edit this
 js/engine.js        the state machine, as pure functions
 js/rules.js         2x windows, RPS, summary aggregation
+js/series.js        chart maths: lead timeline, OHLC bucketing
+js/charts.js        SVG renderers (no chart library)
+js/importer.js      parsing pasted data; building exports
 js/store.js         Firebase reads/writes and transactions
 js/discord.js       webhook payloads
 js/app.js           screens, rendering, the claim fan-out
@@ -205,9 +266,16 @@ js/util.js          formatting, seeded PRNG, localStorage
 dev/                demo mode: in-memory store + practice bot
 ```
 
-`engine.js` and `rules.js` are pure and have no imports from Firebase or the DOM,
-which is what makes the tricky parts (tie detection, escrow, draws, deadlines)
-directly testable.
+`engine.js`, `rules.js`, `series.js` and `importer.js` are pure — no Firebase, no
+DOM — which is what makes the tricky parts (tie detection, escrow, draws,
+deadlines, OHLC bucketing, countdown conversion) directly testable.
+
+The charts are hand-built SVG rather than a charting library: it keeps the site
+dependency-free and there is nothing to load from a CDN. The two series colours
+were validated for the dark surface against colour-vision-deficiency separation
+and contrast rather than picked by eye, and blue always means you while orange
+always means your opponent — including in the candle bodies, where "up" means
+your lead grew.
 
 ## Tuning
 

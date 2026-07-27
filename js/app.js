@@ -22,6 +22,9 @@ import {
   utcDayKey,
   utcHourToLocalRange,
 } from "./util.js";
+import { BUCKETS, bucketOHLC, claimRows, sortRows } from "./series.js";
+import { barChart, candleChart, leadArea, legend } from "./charts.js";
+import { buildExport, countdownToClaims, parseImport } from "./importer.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -46,6 +49,11 @@ const seenDuels = new Set();
 const seenResults = new Set();
 let lastWindowState = new Map(); // code -> boolean (was 2x active last tick)
 let lastClaimIds = new Map(); // code -> last claim id we've already put in the feed
+
+// Chart controls
+let clickSort = store.get("clickSort", "time"); // "time" | "size"
+let leadStyle = store.get("leadStyle", "area"); // "area" | "candle"
+let bucketKey = store.get("bucketKey", "1h");
 
 // --- Boot -------------------------------------------------------------------
 
@@ -140,6 +148,15 @@ function wireSetup() {
     $("join-name").value = me.name;
   }
 
+  let previewTimer;
+  const schedulePreview = () => {
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(updateImportPreview, 250);
+  };
+  $("new-import").addEventListener("input", schedulePreview);
+  $("new-name").addEventListener("input", schedulePreview);
+  $("new-enddate").addEventListener("change", schedulePreview);
+
   $("panel-new").addEventListener("submit", async (e) => {
     e.preventDefault();
     const err = $("new-error");
@@ -160,6 +177,11 @@ function wireSetup() {
 
       saveProfile(name, $("new-discordid").value.trim());
 
+      // Imported history, if any. Parsed here so a bad paste fails before we
+      // create anything.
+      const seed = buildSeed($("new-import").value, endsAt, name);
+      if (seed?.error) throw new Error(seed.error);
+
       // Vanishingly unlikely, but don't stomp an existing game.
       let code = makeGameCode();
       for (let i = 0; i < 5 && (await db.gameExists(code)); i++) code = makeGameCode();
@@ -170,6 +192,7 @@ function wireSetup() {
         webhook: $("new-webhook").value.trim(),
         endsAt,
         player: me,
+        seed: seed?.data,
       });
 
       addToRoster(code);
@@ -214,6 +237,95 @@ function wireSetup() {
       btn.disabled = false;
     }
   });
+}
+
+/**
+ * Parse the import textarea into the shape store.createGame wants.
+ *
+ * Slot 0 is always you. If the log names you second, the slots are swapped so
+ * the history lands on the right player — matching on the name you typed.
+ *
+ * @returns null (nothing pasted) | {error} | {data, summary}
+ */
+function buildSeed(text, endsAt, myName) {
+  const raw = String(text || "").trim();
+  if (!raw) return null;
+
+  const parsed = parseImport(raw);
+  if (!parsed.ok) return { error: parsed.error };
+
+  let players = parsed.players;
+  let claims = parsed.claims;
+  let firstUnknown = false;
+
+  if (parsed.kind === "countdown") {
+    const conv = countdownToClaims(parsed, endsAt);
+    players = conv.players;
+    claims = conv.claims;
+    firstUnknown = conv.firstUnknown;
+  }
+
+  // Put whoever matches the creator's name in slot 0.
+  const mineIdx = players.findIndex((p) => p.name.toLowerCase() === myName.trim().toLowerCase());
+  if (mineIdx > 0) {
+    players = [players[mineIdx], ...players.filter((_, i) => i !== mineIdx)];
+    if (claims) claims = claims.map((c) => ({ ...c, slot: c.slot === mineIdx ? 0 : 1 }));
+  }
+
+  return {
+    data: { players, claims },
+    summary: {
+      players,
+      claimCount: claims?.length ?? 0,
+      kind: parsed.kind,
+      firstUnknown,
+      matchedName: mineIdx >= 0,
+    },
+  };
+}
+
+/** Live feedback under the import box, so a bad paste is obvious before submit. */
+function updateImportPreview() {
+  const box = $("import-preview");
+  const raw = $("new-import").value.trim();
+  if (!raw) {
+    box.classList.add("hidden");
+    return;
+  }
+
+  const dateStr = $("new-enddate").value;
+  let endsAt = db.now() + 30 * 86400e3;
+  if (dateStr) {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    endsAt = new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+  }
+
+  const seed = buildSeed(raw, endsAt, $("new-name").value || "");
+  box.classList.remove("hidden");
+
+  if (!seed || seed.error) {
+    box.className = "import-preview bad";
+    box.innerHTML = `⚠ ${esc(seed?.error || "Couldn't read that.")}`;
+    return;
+  }
+
+  const s = seed.summary;
+  box.className = "import-preview good";
+  box.innerHTML =
+    `✓ Read ${s.claimCount ? `<strong>${s.claimCount}</strong> clicks` : "totals"} for ` +
+    s.players.map((p) => `<strong>${esc(p.name)}</strong> ${fmtDuration(p.seconds)}`).join(" vs ") +
+    (s.players.length > 1
+      ? `<div class="ip-note">${esc(s.players[0].name)} is you; ` +
+        `${esc(s.players[1].name)}'s history is applied when they join with the game code.</div>`
+      : "") +
+    (s.firstUnknown
+      ? `<div class="ip-note">No percentages found, so the time before the first row ` +
+        `couldn't be worked out — that first click counts as 0.</div>`
+      : "") +
+    (!s.matchedName && $("new-name").value.trim()
+      ? `<div class="ip-note">Your name isn't in the log, so the first listed player is ` +
+        `treated as you.</div>`
+      : "");
 }
 
 function saveProfile(name, discordId) {
@@ -752,10 +864,72 @@ function renderHubStats() {
 
   if (single && single.meta) {
     renderStatsFor([single], single, "hub-summary-table", "hub-stat-grid");
+    renderCharts([single], single);
   } else {
     const all = roster.map((r) => games.get(r.code)).filter((g) => g && g.meta);
     renderStatsFor(all, null, "hub-summary-table", "hub-stat-grid");
+    renderCharts(all, null);
   }
+}
+
+// --- Charts -----------------------------------------------------------------
+
+/**
+ * Both charts follow the stats scope selector.
+ *
+ * Across several games the claim streams are merged: each game is its own 1v1
+ * against you, so "you vs them" still reads correctly in aggregate even though
+ * the opponents differ. When exactly one game is in scope we can use the real
+ * opponent's name.
+ */
+function renderCharts(list, single) {
+  const width = Math.max(280, Math.min(680, ($("chart-clicks").clientWidth || 620)));
+
+  // Merge every in-scope game's claims into one stream keyed to me-vs-them.
+  const merged = [];
+  for (const g of list) {
+    const escrowed = g.state?.duel?.status === "open" ? g.state.duel.disputedClaimId : null;
+    for (const c of g.claims || []) {
+      if (c.status !== "settled" || c.id === escrowed) continue;
+      merged.push({ ...c, by: c.by === me.id ? "__me__" : "__them__" });
+    }
+  }
+
+  const oppName = single
+    ? opponentOf(single)?.name || "Opponent"
+    : list.length === 1
+      ? opponentOf(list[0])?.name || "Opponent"
+      : "Opponents";
+  const meName = me.name || "You";
+
+  // --- per-click bars ---
+  const rows = sortRows(claimRows(merged, "__me__"), clickSort);
+  setHTML("chart-clicks-legend", rows.length ? legend(meName, oppName) : "");
+  setHTML("chart-clicks", barChart(rows, { width, meName, oppName }));
+
+  // --- who's winning ---
+  const bucket = BUCKETS.find((b) => b.key === bucketKey) || BUCKETS[2];
+  const buckets = bucketOHLC(merged, "__me__", bucket.ms, db.now());
+
+  setHTML("chart-lead-legend", buckets.length ? legend(meName, oppName) : "");
+  setHTML(
+    "chart-lead",
+    leadStyle === "candle"
+      ? candleChart(buckets, { width, meName, oppName })
+      : leadArea(buckets, { width, meName, oppName })
+  );
+
+  const last = buckets[buckets.length - 1];
+  const note = !last
+    ? ""
+    : leadStyle === "candle"
+      ? `Each candle is one ${bucket.label.toLowerCase()}: body spans the lead at the ` +
+        `start and end, wick spans its high and low within that ${bucket.label.toLowerCase()}. ` +
+        `Blue means your lead grew.`
+      : `Above the dashed line ${esc(meName)} is ahead; below it ${esc(oppName)} ${
+          list.length > 1 || oppName.endsWith("s") ? "are" : "is"
+        }.`;
+  setHTML("chart-lead-note", note);
 }
 
 /**
@@ -1038,6 +1212,25 @@ function wireDetail() {
     }
   });
 
+  $("btn-export").addEventListener("click", async () => {
+    const g = games.get(currentDetail);
+    if (!g) return;
+    const json = JSON.stringify(buildExport(g), null, 2);
+    try {
+      await navigator.clipboard.writeText(json);
+      toast(`Copied ${g.claims?.length || 0} claims to the clipboard.`, "good");
+    } catch {
+      // Clipboard blocked (needs a secure context) — fall back to a download.
+      const url = URL.createObjectURL(new Blob([json], { type: "application/json" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `clicky-${g.code}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast("Downloaded the game data.", "good");
+    }
+  });
+
   $("webhook-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     await db.setWebhook(currentDetail, $("detail-webhook").value.trim());
@@ -1069,6 +1262,42 @@ function wireHub() {
     if (roster.length) goHome();
   });
   $("stats-scope").addEventListener("change", renderHubStats);
+
+  // Chart controls. Each persists, so the view you left is the view you return to.
+  document.querySelectorAll("[data-clicksort]").forEach((b) =>
+    b.addEventListener("click", () => {
+      clickSort = b.dataset.clicksort;
+      store.set("clickSort", clickSort);
+      document
+        .querySelectorAll("[data-clicksort]")
+        .forEach((x) => x.classList.toggle("active", x === b));
+      renderHubStats();
+    })
+  );
+  document.querySelectorAll("[data-leadstyle]").forEach((b) =>
+    b.addEventListener("click", () => {
+      leadStyle = b.dataset.leadstyle;
+      store.set("leadStyle", leadStyle);
+      document
+        .querySelectorAll("[data-leadstyle]")
+        .forEach((x) => x.classList.toggle("active", x === b));
+      renderHubStats();
+    })
+  );
+  $("bucket-size").addEventListener("change", (e) => {
+    bucketKey = e.target.value;
+    store.set("bucketKey", bucketKey);
+    renderHubStats();
+  });
+
+  // Restore persisted chart controls.
+  $("bucket-size").value = bucketKey;
+  document
+    .querySelectorAll("[data-clicksort]")
+    .forEach((x) => x.classList.toggle("active", x.dataset.clicksort === clickSort));
+  document
+    .querySelectorAll("[data-leadstyle]")
+    .forEach((x) => x.classList.toggle("active", x.dataset.leadstyle === leadStyle));
   $("btn-settings").addEventListener("click", () => {
     $("set-name").value = me.name;
     $("set-discordid").value = me.discordId;

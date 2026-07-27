@@ -91,9 +91,16 @@ export async function getMeta(code) {
   return snap.val();
 }
 
-export async function createGame({ code, name, webhook, endsAt, player }) {
+/**
+ * @param seed optional imported history, from importer.parseImport:
+ *   { players: [{name, seconds}], claims?: [{slot, at, seconds, ...}] }
+ *   Slot 0 is the creator. Slot 1 has no player id yet, so its history is
+ *   parked in meta.pendingSeed and applied when the second player joins.
+ */
+export async function createGame({ code, name, webhook, endsAt, player, seed }) {
   const t = now();
-  await set(gameRef(code), {
+
+  const payload = {
     meta: {
       code,
       name: name || "Clicky",
@@ -111,14 +118,64 @@ export async function createGame({ code, name, webhook, endsAt, player }) {
     // The clock starts ticking the moment the game is created. `endsAt` is
     // mirrored here so the claim transaction can enforce it without a second read.
     state: { lastClaimAt: t, lastClaim: null, duel: null, endsAt },
-  });
+  };
+
+  if (seed) {
+    const mine = seedClaimsFor(seed, 0, t);
+    if (mine.length) {
+      payload.claims = {};
+      mine.forEach((c, i) => {
+        payload.claims[`seed_a_${i}`] = { ...c, by: player.id };
+      });
+    }
+    const theirs = seedClaimsFor(seed, 1, t);
+    if (theirs.length) {
+      payload.meta.pendingSeed = {
+        name: seed.players?.[1]?.name || "Player 2",
+        claims: theirs,
+      };
+    }
+  }
+
+  await set(gameRef(code), payload);
+}
+
+/** Turn imported data into claim records for one slot. */
+function seedClaimsFor(seed, slot, atFallback) {
+  if (Array.isArray(seed.claims) && seed.claims.length) {
+    return seed.claims
+      .filter((c) => c.slot === slot)
+      .map((c) => ({
+        at: c.at,
+        seconds: c.seconds,
+        rawSeconds: c.rawSeconds ?? c.seconds,
+        multiplier: c.multiplier ?? 1,
+        status: "settled",
+        imported: true,
+        ...(c.viaDuel ? { viaDuel: c.viaDuel } : {}),
+      }));
+  }
+  // Totals-only import collapses to a single opening claim.
+  const p = seed.players?.[slot];
+  if (!p || !(p.seconds > 0)) return [];
+  return [
+    {
+      at: atFallback,
+      seconds: p.seconds,
+      rawSeconds: p.seconds,
+      multiplier: 1,
+      status: "settled",
+      imported: true,
+    },
+  ];
 }
 
 export async function joinGame({ code, player }) {
   const playersSnap = await get(child(gameRef(code), "players"));
   const players = playersSnap.val() || {};
+  const isNew = !players[player.id];
 
-  if (!players[player.id] && Object.keys(players).length >= 2) {
+  if (isNew && Object.keys(players).length >= 2) {
     throw new Error("This game already has two players.");
   }
 
@@ -127,6 +184,31 @@ export async function joinGame({ code, player }) {
     discordId: player.discordId || "",
     joinedAt: players[player.id]?.joinedAt ?? serverTimestamp(),
   });
+
+  if (isNew) await applyPendingSeed(code, player.id);
+}
+
+/**
+ * Hand the second player the history that was imported for them at creation.
+ * Guarded by a transaction so a double-join can't award it twice.
+ */
+async function applyPendingSeed(code, playerId) {
+  // The committed snapshot is the *new* value (null), so capture the old one in
+  // the closure. On a retry the last invocation is the one that commits, so this
+  // ends up holding what was actually consumed.
+  let captured = null;
+  const res = await runTransaction(child(gameRef(code), "meta/pendingSeed"), (seed) => {
+    if (!seed) return; // nothing parked — abort
+    captured = seed;
+    return null; // claim it, so a second joiner can't take it too
+  });
+  if (!res.committed || !captured) return;
+
+  const updates = {};
+  (captured.claims || []).forEach((c, i) => {
+    updates[`claims/seed_b_${i}`] = { ...c, by: playerId };
+  });
+  if (Object.keys(updates).length) await update(gameRef(code), updates);
 }
 
 /** Presence: mark this player online, and clear it automatically on disconnect. */

@@ -67,17 +67,49 @@ export async function getMeta(code) {
   return clone(world.get(code)?.meta);
 }
 
-export async function createGame({ code, name, webhook, endsAt, player }) {
+export async function createGame({ code, name, webhook, endsAt, player, seed }) {
   const game = g(code);
   game.meta = { code, name: name || "Clicky", createdAt: now(), endsAt, webhook: webhook || "" };
   game.players = {
     [player.id]: { name: player.name, discordId: player.discordId || "", joinedAt: now() },
     // Demo mode seats a bot immediately so there's someone to play against.
-    [BOT]: { name: "Practice Bot", discordId: "", joinedAt: now() },
+    [BOT]: { name: seed?.players?.[1]?.name || "Practice Bot", discordId: "", joinedAt: now() },
   };
   game.presence = { [BOT]: { online: true, at: now() } };
   game.state = { lastClaimAt: now(), lastClaim: null, duel: null, endsAt };
+  game.claims = {};
+
+  // Demo mode has both seats filled from the start, so imported history for
+  // slot 1 can be applied immediately instead of parked in meta.pendingSeed.
+  if (seed) {
+    const ids = [player.id, BOT];
+    for (const slot of [0, 1]) {
+      seedClaims(seed, slot).forEach((c, i) => {
+        game.claims[`seed_${slot}_${i}`] = { ...c, by: ids[slot] };
+      });
+    }
+  }
   emitAll(code);
+}
+
+function seedClaims(seed, slot) {
+  if (Array.isArray(seed.claims) && seed.claims.length) {
+    return seed.claims
+      .filter((c) => c.slot === slot)
+      .map((c) => ({
+        at: c.at,
+        seconds: c.seconds,
+        rawSeconds: c.rawSeconds ?? c.seconds,
+        multiplier: c.multiplier ?? 1,
+        status: "settled",
+        imported: true,
+      }));
+  }
+  const p = seed.players?.[slot];
+  if (!p || !(p.seconds > 0)) return [];
+  return [
+    { at: now(), seconds: p.seconds, rawSeconds: p.seconds, multiplier: 1, status: "settled", imported: true },
+  ];
 }
 
 export async function joinGame({ code, player }) {
