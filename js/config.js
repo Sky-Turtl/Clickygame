@@ -9,15 +9,16 @@
 // See README.md for the full walkthrough including security rules.
 // ---------------------------------------------------------------------------
 
-export const firebaseConfig = {
-  apiKey: "PASTE_ME",
-  authDomain: "PASTE_ME.firebaseapp.com",
-  databaseURL: "https://PASTE_ME-default-rtdb.firebaseio.com",
-  projectId: "PASTE_ME",
-  storageBucket: "PASTE_ME.appspot.com",
-  messagingSenderId: "PASTE_ME",
-  appId: "PASTE_ME",
+const firebaseConfig = {
+  apiKey: "AIzaSyDxPhI8qK2GQvEsFkgTLcly-msUaRJGN8E",
+  authDomain: "clicky-f87a3.firebaseapp.com",
+  databaseURL: "https://clicky-f87a3-default-rtdb.firebaseio.com",
+  projectId: "clicky-f87a3",
+  storageBucket: "clicky-f87a3.firebasestorage.app",
+  messagingSenderId: "910470214643",
+  appId: "1:910470214643:web:ba420e8ceb57595cf49886"
 };
+
 
 // --- Game tuning ------------------------------------------------------------
 
