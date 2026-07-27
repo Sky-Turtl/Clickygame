@@ -400,11 +400,16 @@ function onStateChange(g) {
 
 function onClaimsChange(g) {
   const latest = (g.claims || []).filter((c) => c.status === "settled").at(-1);
-  if (!latest) return;
+  // Mark the game as seen even when it has no claims yet, so that the *first*
+  // claim of a brand-new game still notifies rather than being mistaken for
+  // pre-existing history.
+  const seenBefore = lastClaimIds.has(g.code);
   const prev = lastClaimIds.get(g.code);
-  lastClaimIds.set(g.code, latest.id);
-  // Only surface the *other* player's claims, and not on first load.
-  if (prev && latest.id !== prev && latest.by !== me.id) {
+  lastClaimIds.set(g.code, latest?.id ?? null);
+  if (!latest) return;
+
+  // Only surface the *other* player's claims, and never replay history on load.
+  if (seenBefore && latest.id !== prev && latest.by !== me.id) {
     const who = g.players?.[latest.by]?.name || "Someone";
     toast(
       `<strong>${esc(who)}</strong> claimed ${fmtDuration(latest.seconds)} in ` +

@@ -2,14 +2,18 @@
 // PASTE YOUR FIREBASE CONFIG HERE.
 //
 // 1. Go to https://console.firebase.google.com  ->  Add project
-// 2. Build -> Realtime Database -> Create Database -> Start in TEST MODE
-// 3. Project settings (gear icon) -> Your apps -> Web (</>) -> Register app
-// 4. Copy the firebaseConfig object it shows you and paste it below.
+// 2. Build -> Realtime Database -> Create Database
+//    (then set the security rules from README.md step 3)
+// 3. Sidebar: Settings (gear) -> Project settings -> General -> Your apps
+//    -> Web (</>) -> Register app
+// 4. Copy the firebaseConfig object it shows you and paste it below, keeping
+//    the `export` keyword in front of `const`.
 //
 // See README.md for the full walkthrough including security rules.
 // ---------------------------------------------------------------------------
 
-const firebaseConfig = {
+// Keep the `export` keyword — the rest of the app imports this by name.
+export const firebaseConfig = {
   apiKey: "AIzaSyDxPhI8qK2GQvEsFkgTLcly-msUaRJGN8E",
   authDomain: "clicky-f87a3.firebaseapp.com",
   databaseURL: "https://clicky-f87a3-default-rtdb.firebaseio.com",
