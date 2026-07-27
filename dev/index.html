@@ -1,9 +1,8 @@
 <!DOCTYPE html>
 <!--
-  DEMO PAGE. A copy of ../index.html with an import map swapping js/store.js for
-  dev/mock-store.js, so the game runs entirely in memory against a practice bot.
-  Not part of the deployed site. If you change index.html and want the demo to
-  match, copy the changes across.
+  DEMO PAGE. Generated from ../index.html with an import map swapping js/store.js
+  for dev/mock-store.js, so the game runs in memory against a practice bot.
+  Not part of the deployed site. Regenerate after changing index.html.
 -->
 <html lang="en">
 <head>
@@ -40,7 +39,7 @@
   <!-- ================= SETUP ================= -->
   <section class="screen" id="screen-setup">
     <header class="brand">
-      <h1>⏱️ Clicky</h1>
+      <h1 id="brand-logo">⏱️ Clicky</h1>
       <p class="tagline">Whoever clicks, claims the time since the last click.</p>
     </header>
 
@@ -117,6 +116,15 @@
       </form>
     </div>
 
+    <!-- Games this browser is already in -->
+    <section id="rejoin-section" class="hidden">
+      <div class="section-head">
+        <h2>Rejoin a game</h2>
+        <span class="section-hint" id="rejoin-hint"></span>
+      </div>
+      <div class="game-list" id="rejoin-list"></div>
+    </section>
+
     <p class="footnote">
       Two players, one shared clock. Every second that passes belongs to whoever clicks next.
     </p>
@@ -127,7 +135,7 @@
     <header class="topbar">
       <div class="topbar-left">
         <span class="conn" id="conn-dot" title="Connection"></span>
-        <span class="game-title">⏱️ Clicky</span>
+        <button class="logo-btn" id="hub-logo" title="Back to the main screen">⏱️ Clicky</button>
       </div>
       <div class="topbar-right">
         <button class="btn btn-ghost" id="btn-add">+ Game</button>
@@ -157,6 +165,27 @@
 
     <div id="game-list" class="game-list"></div>
 
+    <div class="section-head">
+      <h2>Stats</h2>
+      <select id="stats-scope" class="scope-select" aria-label="Which games to show stats for">
+        <option value="__all__">All games</option>
+      </select>
+    </div>
+
+    <div class="card">
+      <p class="card-sub" id="hub-stats-sub">
+        <strong>Claimed</strong> counts the 2x bonus and decides the winner.
+        <strong>Actual</strong> is real wall-clock time that was on the board.
+      </p>
+      <div class="table-scroll">
+        <table class="summary-table" id="hub-summary-table"></table>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="stat-grid" id="hub-stat-grid"></div>
+    </div>
+
     <p class="footnote">
       Toggle <strong>sync</strong> on a game to include it in every claim. One click, banked in
       every synced game at once — each against its own clock.
@@ -168,6 +197,7 @@
     <header class="topbar">
       <div class="topbar-left">
         <button class="btn btn-ghost" id="btn-back">←</button>
+        <button class="logo-btn small" id="detail-logo" title="Back to the main screen">⏱️</button>
         <span class="game-title" id="detail-title">Game</span>
       </div>
       <div class="topbar-right">

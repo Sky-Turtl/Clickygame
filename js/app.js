@@ -94,6 +94,14 @@ function showScreen(which) {
     $("screen-" + s).classList.toggle("hidden", s !== which);
   }
   window.scrollTo(0, 0);
+  if (which === "setup") renderRejoin();
+}
+
+/** The main screen: the hub once you're in a game, otherwise setup. */
+function goHome() {
+  currentDetail = null;
+  showScreen(roster.length ? "hub" : "setup");
+  render();
 }
 
 function toast(msg, kind = "") {
@@ -489,8 +497,10 @@ function tick() {
 }
 
 function render() {
-  if ($("screen-hub").classList.contains("hidden") === false) renderHub();
-  if ($("screen-detail").classList.contains("hidden") === false) renderDetail();
+  if (!$("screen-setup").classList.contains("hidden")) renderRejoin();
+  if (!$("screen-hub").classList.contains("hidden")) renderHub();
+  if (!$("screen-detail").classList.contains("hidden")) renderDetail();
+  $("brand-logo").classList.toggle("clickable", roster.length > 0);
   renderDuelModal();
 }
 
@@ -539,6 +549,7 @@ function renderHub() {
   }
 
   $("sync-hint").textContent = `${syncedCount} of ${roster.length} synced`;
+  renderHubStats();
 
   // Banners
   const banners = [];
@@ -640,6 +651,222 @@ function renderGameList() {
       b.addEventListener("click", () => openDetail(b.dataset.open))
     );
   }
+}
+
+// --- Rejoin list (setup screen) ---------------------------------------------
+
+/**
+ * The setup screen doubles as home, so it lists the games this browser is
+ * already in. Reachable via the logo or "+ Game", which is otherwise a one-way
+ * trip into the join form.
+ */
+function renderRejoin() {
+  const section = $("rejoin-section");
+  section.classList.toggle("hidden", roster.length === 0);
+  if (!roster.length) return;
+
+  $("rejoin-hint").textContent = `${roster.length} game${roster.length > 1 ? "s" : ""}`;
+
+  const html = roster
+    .map((entry) => {
+      const g = games.get(entry.code);
+      if (!g || !g.meta) {
+        return `<div class="game-card loading" data-rejoin="${esc(entry.code)}">
+          <div class="gc-main"><div class="gc-name">${esc(entry.code)}</div>
+          <div class="gc-sub">loading…</div></div></div>`;
+      }
+      const { rows } = totalsFor(g);
+      const opp = opponentOf(g);
+      const mine = rows[me.id]?.all.claimed || 0;
+      const theirs = opp ? rows[opp.id]?.all.claimed || 0 : 0;
+      const over = isOver(g);
+      const remain = g.meta.endsAt - db.now();
+
+      return `<div class="game-card ${over ? "over" : ""}" data-rejoin="${esc(g.code)}">
+        <div class="gc-main">
+          <div class="gc-head">
+            <span class="gc-name">${esc(gameLabel(g))}</span>
+            ${over ? '<span class="gc-flag over">ENDED</span>' : ""}
+            <span class="gc-code">${esc(g.code)}</span>
+          </div>
+          <div class="gc-scores">
+            <span class="gc-me">You ${fmtDurationShort(mine)}</span>
+            <span class="gc-them">${
+              opp ? `${esc(opp.name)} ${fmtDurationShort(theirs)}` : "waiting for player 2"
+            }</span>
+          </div>
+          <div class="gc-sub">${
+            over
+              ? "ended"
+              : remain < 86400e3
+                ? `${Math.max(0, Math.floor(remain / 3600e3))}h left`
+                : `${Math.ceil(remain / 86400e3)}d left`
+          }</div>
+        </div>
+        <span class="rejoin-arrow">→</span>
+      </div>`;
+    })
+    .join("");
+
+  const host = $("rejoin-list");
+  if (host.dataset.sig === html) return;
+  host.dataset.sig = html;
+  host.innerHTML = html;
+  host.querySelectorAll("[data-rejoin]").forEach((el) =>
+    el.addEventListener("click", () => {
+      showScreen("hub");
+      render();
+    })
+  );
+}
+
+// --- Hub stats --------------------------------------------------------------
+
+/**
+ * Summary on the main screen, scoped to one game or aggregated across all of
+ * them. In the aggregate view opponents are pooled — each game is its own 1v1,
+ * so a single "them" column is the only thing that reads sensibly.
+ */
+function renderHubStats() {
+  const sel = $("stats-scope");
+
+  // Rebuild the dropdown only when the set of games actually changes, so it
+  // isn't yanked out from under the user mid-interaction.
+  const optSig = roster.map((r) => `${r.code}:${gameLabel(games.get(r.code) || { code: r.code })}`).join("|");
+  if (sel.dataset.sig !== optSig) {
+    const keep = sel.value;
+    sel.dataset.sig = optSig;
+    sel.innerHTML =
+      `<option value="__all__">All games</option>` +
+      roster
+        .map((r) => {
+          const g = games.get(r.code);
+          return `<option value="${esc(r.code)}">${esc(g ? gameLabel(g) : r.code)}</option>`;
+        })
+        .join("");
+    if (keep && [...sel.options].some((o) => o.value === keep)) sel.value = keep;
+  }
+
+  const scope = sel.value || "__all__";
+  const single = scope !== "__all__" ? games.get(scope) : null;
+
+  if (single && single.meta) {
+    renderStatsFor([single], single, "hub-summary-table", "hub-stat-grid");
+  } else {
+    const all = roster.map((r) => games.get(r.code)).filter((g) => g && g.meta);
+    renderStatsFor(all, null, "hub-summary-table", "hub-stat-grid");
+  }
+}
+
+/**
+ * @param list   games to aggregate over
+ * @param single non-null when showing exactly one game, which lets us use the
+ *               players' real names instead of "You" / "Them"
+ */
+function renderStatsFor(list, single, tableId, gridId) {
+  const nowMs = db.now();
+
+  let cols; // [{ key, label, get(rows, periodKey) -> {claimed, actual} }]
+  if (single) {
+    const ids = Object.keys(single.players || {});
+    cols = ids.map((id) => ({
+      key: id,
+      label: single.players[id].name + (id === me.id ? " (you)" : ""),
+    }));
+  } else {
+    cols = [
+      { key: "__me__", label: "You" },
+      { key: "__them__", label: list.length === 1 ? "Opponent" : "Opponents" },
+    ];
+  }
+
+  // period -> col -> {claimed, actual}
+  const grid = {};
+  for (const p of PERIODS) {
+    grid[p.key] = {};
+    for (const c of cols) grid[p.key][c.key] = { claimed: 0, actual: 0 };
+  }
+
+  for (const g of list) {
+    const { ids, rows } = totalsFor(g);
+    for (const p of PERIODS) {
+      for (const id of ids) {
+        const cell = rows[id][p.key];
+        const colKey = single ? id : id === me.id ? "__me__" : "__them__";
+        if (!grid[p.key][colKey]) continue;
+        grid[p.key][colKey].claimed += cell.claimed;
+        grid[p.key][colKey].actual += cell.actual;
+      }
+    }
+  }
+
+  const head =
+    `<thead><tr><th>Period</th>` +
+    cols.map((c) => `<th>${esc(c.label)}</th>`).join("") +
+    `</tr></thead>`;
+
+  const body =
+    `<tbody>` +
+    PERIODS.map((p) => {
+      const best = Math.max(...cols.map((c) => grid[p.key][c.key].claimed));
+      return (
+        `<tr><td>${p.label}</td>` +
+        cols
+          .map((c) => {
+            const cell = grid[p.key][c.key];
+            const win = cols.length > 1 && cell.claimed === best && best > 0;
+            return `<td class="num ${win ? "win" : ""}">${fmtDurationShort(cell.claimed)}
+              <div class="sub">${fmtDurationShort(cell.actual)} actual</div></td>`;
+          })
+          .join("") +
+        `</tr>`
+      );
+    }).join("") +
+    `</tbody>`;
+
+  setHTML(tableId, head + body);
+
+  // Totals row
+  let claimedAll = 0;
+  let actualAll = 0;
+  let claimCount = 0;
+  let duelCount = 0;
+  let clock = 0;
+  for (const g of list) {
+    const { ids, rows } = totalsFor(g);
+    for (const id of ids) {
+      claimedAll += rows[id].all.claimed;
+      actualAll += rows[id].all.actual;
+    }
+    claimCount += (g.claims || []).filter((c) => c.status === "settled").length;
+    duelCount += (g.claims || []).filter((c) => c.viaDuel).length;
+    if (!isOver(g)) clock += onClock(g);
+  }
+
+  setHTML(
+    gridId,
+    [
+      ["Actual time clicked", fmtDuration(actualAll)],
+      ["Total claimed", fmtDuration(claimedAll)],
+      ["Bonus from 2x", fmtDuration(claimedAll - actualAll)],
+      ["Claims", String(claimCount)],
+      ["Duels", String(duelCount)],
+      [list.length > 1 ? "On the clock (all)" : "On the clock", fmtDuration(clock)],
+    ]
+      .map(
+        ([l, v]) =>
+          `<div class="stat"><div class="stat-label">${l}</div><div class="stat-value">${v}</div></div>`
+      )
+      .join("")
+  );
+}
+
+/** Skip the DOM write when nothing changed — this runs on a 200ms tick. */
+function setHTML(id, html) {
+  const el = $(id);
+  if (el.dataset.sig === html) return;
+  el.dataset.sig = html;
+  el.innerHTML = html;
 }
 
 // --- Detail screen ----------------------------------------------------------
@@ -836,6 +1063,12 @@ function wireHub() {
     switchTab("join");
     showScreen("setup");
   });
+  $("hub-logo").addEventListener("click", goHome);
+  $("detail-logo").addEventListener("click", goHome);
+  $("brand-logo").addEventListener("click", () => {
+    if (roster.length) goHome();
+  });
+  $("stats-scope").addEventListener("change", renderHubStats);
   $("btn-settings").addEventListener("click", () => {
     $("set-name").value = me.name;
     $("set-discordid").value = me.discordId;

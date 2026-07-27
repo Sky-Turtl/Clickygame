@@ -413,6 +413,65 @@ input[type=date] { color-scheme: dark; }
 .sync-toggle:hover:not(:disabled) { color: var(--text); }
 .sync-toggle:disabled { opacity: .35; cursor: not-allowed; }
 
+/* ---------- Logo as a home button ---------- */
+
+.logo-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  font-size: 16px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity .15s;
+}
+.logo-btn:hover { opacity: .7; }
+.logo-btn.small { font-size: 18px; }
+
+#brand-logo.clickable { cursor: pointer; }
+#brand-logo.clickable:hover { opacity: .8; }
+
+/* ---------- Rejoin list ---------- */
+
+#rejoin-section { margin-top: 26px; }
+
+.game-card .gc-code {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: .1em;
+  color: var(--text-faint);
+}
+
+.rejoin-arrow {
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  color: var(--text-faint);
+  font-size: 18px;
+  flex: none;
+}
+.game-card:hover .rejoin-arrow { color: var(--accent); }
+[data-rejoin] { cursor: pointer; }
+
+/* ---------- Stats scope selector ---------- */
+
+.scope-select {
+  background: var(--bg-raise);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 5px 9px;
+  cursor: pointer;
+  max-width: 55%;
+}
+.scope-select:hover { border-color: var(--accent); }
+.scope-select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+
 .duel-game {
   font-size: 12px; color: var(--text-faint);
   text-transform: uppercase; letter-spacing: .1em;
