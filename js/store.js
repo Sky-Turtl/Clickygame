@@ -95,7 +95,7 @@ export async function getMeta(code) {
  * @param seed optional imported history, from importer.parseImport:
  *   { players: [{name, seconds}], claims?: [{slot, at, seconds, ...}] }
  *   Slot 0 is the creator. Slot 1 has no player id yet, so its history is
- *   parked in meta.pendingSeed and applied when the second player joins.
+ *   parked in meta.pendingSeeds and applied when the second player joins.
  */
 export async function createGame({ code, name, webhook, endsAt, player, seed }) {
   const t = now();
