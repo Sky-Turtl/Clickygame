@@ -383,6 +383,20 @@ input[type=date] { color-scheme: dark; }
 .gc-sub { font-size: 12px; color: var(--text-faint); margin-top: 7px; }
 .gc-clock { font-family: var(--mono); }
 
+/* Per-game "what's it waiting on" line — the thing that's ambiguous once you
+   have several games synced at once. */
+.gc-status {
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+.gc-status-ready { color: var(--green); }
+.gc-status-cooling { color: var(--text-dim); }
+.gc-status-wait { color: var(--gold); }
+.gc-status-off { color: var(--text-faint); font-weight: 500; }
+
 .sync-toggle {
   flex: none;
   width: 62px;
@@ -796,9 +810,51 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-
 .toast.bad { border-color: rgba(255,92,114,.45); }
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } }
 
+@media (max-width: 480px) {
+  #app { padding: 14px 10px 48px; }
+
+  .brand { margin: 20px 0 18px; }
+  .brand h1 { font-size: 30px; }
+
+  .topbar { flex-wrap: wrap; row-gap: 8px; }
+  .game-title { max-width: 100%; }
+
+  .clock-card { padding: 20px 14px 18px; }
+  .btn-claim { padding: 20px 14px; font-size: 19px; }
+
+  .card { padding: 14px; }
+
+  /* Sort/scope controls stack instead of overflowing sideways. */
+  .chart-head { align-items: stretch; }
+  .chart-controls { justify-content: space-between; width: 100%; }
+  .scope-select { max-width: none; }
+
+  /* Game card: sync toggle stays a comfortable tap target instead of shrinking. */
+  .sync-toggle { width: 52px; font-size: 8.5px; }
+  .gc-name { font-size: 14px; }
+  .gc-scores { flex-wrap: wrap; row-gap: 4px; }
+  .gc-lead { order: 3; width: 100%; text-align: left; }
+
+  .stat-grid { grid-template-columns: repeat(2, 1fr); }
+
+  .modal { padding: 18px; border-radius: 14px; }
+  .throws { gap: 8px; }
+  .throw { padding: 14px 4px; }
+
+  .summary-table th, .summary-table td { padding: 9px 6px; font-size: 12.5px; }
+}
+
 @media (max-width: 420px) {
   .scores { grid-template-columns: 1fr; }
   .copy-hint { display: none; }
+}
+
+@media (max-width: 360px) {
+  .clock { font-size: clamp(32px, 14vw, 46px); }
+  .btn-claim-text { letter-spacing: .04em; }
+  .stat-grid { grid-template-columns: 1fr 1fr; gap: 8px; }
+  .win-row { flex-wrap: wrap; row-gap: 4px; }
+  .win-row .win-state { margin-left: 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {

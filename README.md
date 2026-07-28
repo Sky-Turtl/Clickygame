@@ -210,6 +210,9 @@ and when a duel starts or resolves. Each event fires exactly once even though
 both browsers see it — the clients race for a lock in the database and only the
 winner posts.
 
+No notifications go out between **1am and 7am US Eastern**, regardless of time
+zone — the game itself doesn't sleep, it just won't page anyone overnight.
+
 ---
 
 ## How the rules actually work

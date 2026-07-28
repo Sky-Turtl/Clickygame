@@ -12,10 +12,22 @@ const COLORS = {
   window: 0xeb459e,
 };
 
+// No pings between 1am and 7am US Eastern — reads the wall-clock hour in that
+// zone directly so it stays correct across EST/EDT without tracking DST.
+function inQuietHours() {
+  const hour = Number(
+    new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false }).format(
+      new Date()
+    )
+  );
+  return hour >= 1 && hour < 7;
+}
+
 async function post(webhookUrl, payload) {
   if (!webhookUrl || !/^https:\/\/(canary\.|ptb\.)?discord\.com\/api\/webhooks\//.test(webhookUrl)) {
     return false;
   }
+  if (inQuietHours()) return false;
   try {
     const res = await fetch(webhookUrl, {
       method: "POST",

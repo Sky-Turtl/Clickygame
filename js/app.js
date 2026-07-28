@@ -792,6 +792,25 @@ function renderGameList() {
           ? `${Math.max(0, Math.floor(remain / 3600e3))}h left`
           : `${Math.ceil(remain / 86400e3)}d left`;
 
+      // One clear line per card: what this specific game is waiting on right
+      // now. With several games synced at once, this is the thing that's hard
+      // to tell apart otherwise — ready vs cooling vs blocked vs unsynced.
+      const cdLeft = cooldownLeft(g);
+      let status = null; // { cls, text }
+      if (over) {
+        status = null;
+      } else if (duel) {
+        status = { cls: "wait", text: "⚔ Your throw is needed" };
+      } else if (!opp) {
+        status = { cls: "wait", text: "Waiting for player 2 to join" };
+      } else if (!synced) {
+        status = { cls: "off", text: "Not synced — clicks skip this game" };
+      } else if (cdLeft > 0) {
+        status = { cls: "cooling", text: `Ready in ${(cdLeft / 1000).toFixed(1)}s` };
+      } else {
+        status = { cls: "ready", text: "Ready to claim" };
+      }
+
       return `
       <div class="game-card ${over ? "over" : ""} ${duel ? "duel" : ""}" data-code="${esc(g.code)}">
         <div class="gc-main" data-open="${esc(g.code)}">
@@ -815,6 +834,7 @@ function renderGameList() {
               opp ? `${esc(opp.name)} ${fmtDurationShort(theirs)}` : `code ${esc(g.code)}`
             }<span class="dot ${oppOnline ? "online" : ""}"></span></span>
           </div>
+          ${status ? `<div class="gc-status gc-status-${status.cls}">${status.text}</div>` : ""}
           <div class="gc-sub">
             ${over ? "" : `<span class="gc-clock">${fmtDuration(onClock(g))} on the clock</span> · `}${deadline}
           </div>
