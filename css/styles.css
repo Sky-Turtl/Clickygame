@@ -541,6 +541,58 @@ input[type=date] { color-scheme: dark; }
 .f-tag.x2 { background: rgba(255,201,77,.16); color: var(--gold); }
 .f-tag.duel { background: rgba(255,92,114,.16); color: var(--red); }
 
+/* Collapsed run of consecutive claims by one player */
+.feed li.run { display: block; padding: 0; }
+.feed li.run > details > summary {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 0;
+  cursor: pointer;
+  list-style: none;
+  font-size: 13.5px;
+}
+.feed li.run > details > summary::-webkit-details-marker { display: none; }
+.feed li.run > details > summary::before {
+  content: "▸";
+  color: var(--text-faint);
+  font-size: 10px;
+  transition: transform .15s;
+  display: inline-block;
+}
+.feed li.run > details[open] > summary::before { transform: rotate(90deg); }
+.feed li.run > details > summary:hover { color: var(--text); }
+
+.f-count {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(109,139,255,.16);
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+.splits {
+  list-style: none;
+  margin: 0 0 8px;
+  padding: 2px 0 2px 16px;
+  border-left: 2px solid var(--line);
+}
+.feed .splits li.split {
+  border-top: none;
+  padding: 5px 0;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.split-n {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  min-width: 38px;
+}
+
 /* ---------- Summary ---------- */
 
 .table-scroll { overflow-x: auto; margin: 0 -4px; }

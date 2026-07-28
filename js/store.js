@@ -32,7 +32,7 @@ import {
   signInAnonymously,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
-import { firebaseConfig, TIE_WINDOW_MS } from "./config.js";
+import { firebaseConfig, MIN_CLAIM_INTERVAL_MS, TIE_WINDOW_MS } from "./config.js";
 import { multiplierAt } from "./rules.js";
 import { applyClaim, applySettle, applyThrow } from "./engine.js";
 
@@ -130,11 +130,17 @@ export async function createGame({ code, name, webhook, endsAt, player, seed }) 
     }
     const theirs = seedClaimsFor(seed, 1, t);
     if (theirs.length) {
-      payload.meta.pendingSeed = {
-        name: seed.players?.[1]?.name || "Player 2",
-        claims: theirs,
-      };
+      payload.meta.pendingSeeds = [
+        { name: seed.players?.[1]?.name || "Player 2", claims: theirs },
+      ];
     }
+    // Imported history ends at its last click, so the clock should have been
+    // running since then rather than restarting at creation.
+    const lastAt = Math.max(
+      t,
+      ...[...mine, ...theirs].map((c) => c.at).filter((n) => Number.isFinite(n))
+    );
+    if (Number.isFinite(lastAt)) payload.state.lastClaimAt = Math.min(lastAt, t);
   }
 
   await set(gameRef(code), payload);
@@ -185,28 +191,74 @@ export async function joinGame({ code, player }) {
     joinedAt: players[player.id]?.joinedAt ?? serverTimestamp(),
   });
 
-  if (isNew) await applyPendingSeed(code, player.id);
+  if (isNew) await applyPendingSeed(code, player.id, player.name);
 }
 
 /**
- * Hand the second player the history that was imported for them at creation.
- * Guarded by a transaction so a double-join can't award it twice.
+ * Hand a joining player the history that was imported for them.
+ *
+ * Seats are matched by name where possible, so it doesn't matter which of the
+ * two players enters the code first. A transaction removes the seat as it is
+ * taken, so two joiners can never collect the same history.
  */
-async function applyPendingSeed(code, playerId) {
-  // The committed snapshot is the *new* value (null), so capture the old one in
-  // the closure. On a retry the last invocation is the one that commits, so this
-  // ends up holding what was actually consumed.
+async function applyPendingSeed(code, playerId, playerName) {
+  const seedsRef = child(gameRef(code), "meta/pendingSeeds");
+
+  // Claim a one-shot lock for this player before touching the seeds.
+  //
+  // joinGame can fire more than once for the same player (a double submit, a
+  // retry). Without this, the second pass would find no name match, fall back to
+  // the first remaining seat, and hand this player their OPPONENT's history.
+  //
+  // This transaction is safe on a cold cache precisely because its empty branch
+  // returns a value rather than aborting: if the local pass wrongly sees null it
+  // writes `true`, the server rejects the stale write, and the retry sees the
+  // real `true` and aborts.
+  const lock = await runTransaction(
+    child(gameRef(code), `meta/seeded/${playerId}`),
+    (v) => (v ? undefined : true)
+  );
+  if (!lock.committed) return; // already seeded, or another pass is doing it
+
+  // Attach a listener so the node is genuinely synced locally.
+  //
+  // runTransaction runs its callback against the local cache FIRST, and if that
+  // pass aborts (returns undefined) Firebase short-circuits without ever
+  // contacting the server. A plain get() does NOT populate the sync tree the
+  // transaction reads, so without a live listener here the callback sees null,
+  // aborts, and the imported history is silently dropped.
+  const unsub = onValue(seedsRef, () => {});
+  try {
+    await get(seedsRef);
+    return await consumeSeed(code, playerId, playerName, seedsRef);
+  } finally {
+    unsub();
+  }
+}
+
+async function consumeSeed(code, playerId, playerName, seedsRef) {
   let captured = null;
-  const res = await runTransaction(child(gameRef(code), "meta/pendingSeed"), (seed) => {
-    if (!seed) return; // nothing parked — abort
-    captured = seed;
-    return null; // claim it, so a second joiner can't take it too
+
+  const res = await runTransaction(seedsRef, (seeds) => {
+    if (!Array.isArray(seeds) || !seeds.length) return; // nothing parked — abort
+
+    const want = String(playerName || "").trim().toLowerCase();
+    let i = seeds.findIndex((s) => String(s?.name || "").trim().toLowerCase() === want);
+    if (i < 0) i = 0; // no name match — take the next free seat
+
+    captured = seeds[i];
+    const rest = seeds.filter((_, n) => n !== i);
+    return rest.length ? rest : null;
   });
+
   if (!res.committed || !captured) return;
 
+  // Key by playerId, not by the seed's index. `index` is a position within the
+  // *remaining* seeds, so once the first player has been consumed the second one
+  // is also index 0 — and would overwrite the first player's claims wholesale.
   const updates = {};
   (captured.claims || []).forEach((c, i) => {
-    updates[`claims/seed_b_${i}`] = { ...c, by: playerId };
+    updates[`claims/seed_${playerId}_${i}`] = { ...c, by: playerId };
   });
   if (Object.keys(updates).length) await update(gameRef(code), updates);
 }
@@ -272,6 +324,7 @@ export async function claim(code, playerId) {
       claimId,
       duelId,
       tieWindowMs: TIE_WINDOW_MS,
+      minIntervalMs: MIN_CLAIM_INTERVAL_MS,
     })
   );
 

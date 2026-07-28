@@ -29,6 +29,13 @@ export const firebaseConfig = {
 // Two claims from *different* players inside this window trigger rock-paper-scissors.
 export const TIE_WINDOW_MS = 3000;
 
+// How long you must wait after your OWN claim before you can claim again.
+// Deliberately per-player, not global: a global minimum longer than
+// TIE_WINDOW_MS would make it impossible for two claims to ever land within the
+// tie window, silently killing rock-paper-scissors. This stops one player
+// machine-gunning the button while leaving duels intact.
+export const MIN_CLAIM_INTERVAL_MS = 5000;
+
 // How many 1-hour double-time windows happen per day.
 export const DOUBLE_WINDOWS_PER_DAY = 2;
 

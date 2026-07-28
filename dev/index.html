@@ -12,20 +12,11 @@
 <link rel="stylesheet" href="../css/styles.css">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>⏱️</text></svg>">
 <style>
-  .demo-flag {
-    position: fixed; left: 0; right: 0; bottom: 0;
-    background: rgba(255,201,77,.14);
-    border-top: 1px solid rgba(255,201,77,.4);
-    color: #ffc94d;
-    font-size: 12px; text-align: center; padding: 8px;
-    display: flex; gap: 10px; align-items: center; justify-content: center;
-    z-index: 70;
-  }
-  .demo-flag button {
-    font: inherit; font-size: 11px; cursor: pointer;
-    background: #1c2130; color: #e8ecf5;
-    border: 1px solid #262c3d; border-radius: 6px; padding: 4px 9px;
-  }
+  .demo-flag { position: fixed; left:0; right:0; bottom:0; background: rgba(255,201,77,.14);
+    border-top: 1px solid rgba(255,201,77,.4); color:#ffc94d; font-size:12px; text-align:center;
+    padding:8px; display:flex; gap:10px; align-items:center; justify-content:center; z-index:70; }
+  .demo-flag button { font: inherit; font-size:11px; cursor:pointer; background:#1c2130;
+    color:#e8ecf5; border:1px solid #262c3d; border-radius:6px; padding:4px 9px; }
   .toast-host { bottom: 56px; }
 </style>
 </head>
@@ -81,6 +72,22 @@
               <code>Name: 1h 30m</code> totals or a JSON export.
             </small>
           </label>
+
+          <div class="two-up">
+            <label>
+              Counted down to <span class="opt">if not the end date</span>
+              <input type="datetime-local" id="new-anchor">
+              <small>The date your old log was counting toward. Leave blank if it's the
+              same as this game's end date.</small>
+            </label>
+            <label>
+              Starting seconds <span class="opt">optional</span>
+              <input type="text" id="new-total" inputmode="numeric" placeholder="e.g. 4938168">
+              <small>The countdown's original total. Overrides the value worked out from
+              the percent column.</small>
+            </label>
+          </div>
+
           <div class="import-preview hidden" id="import-preview"></div>
         </details>
 

@@ -31,6 +31,45 @@ export function claimRows(claims, meId) {
     }));
 }
 
+/**
+ * Collapse consecutive claims by the same player into one entry.
+ *
+ * A burst of clicks from one person reads as noise in the feed — this rolls each
+ * run up into a single row carrying the combined total, with the individual
+ * claims kept in `items` so the UI can expand them.
+ *
+ * @param rows chronological rows from claimRows
+ */
+export function groupRuns(rows) {
+  const out = [];
+  for (const r of rows) {
+    const last = out[out.length - 1];
+    if (last && last.by === r.by) {
+      last.items.push(r);
+      last.seconds += r.seconds;
+      last.rawSeconds += r.rawSeconds;
+      last.to = r.at;
+      last.count = last.items.length;
+      if (r.multiplier > 1) last.anyDoubled = true;
+      if (r.viaDuel) last.anyDuel = true;
+    } else {
+      out.push({
+        by: r.by,
+        mine: r.mine,
+        items: [r],
+        count: 1,
+        seconds: r.seconds,
+        rawSeconds: r.rawSeconds,
+        from: r.at,
+        to: r.at,
+        anyDoubled: r.multiplier > 1,
+        anyDuel: !!r.viaDuel,
+      });
+    }
+  }
+  return out;
+}
+
 /** @param mode "time" (as clicked) or "size" (biggest first) */
 export function sortRows(rows, mode) {
   const out = rows.slice();

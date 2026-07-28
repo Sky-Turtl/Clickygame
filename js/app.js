@@ -1,6 +1,6 @@
 // Clicky — app shell, rendering, and the multi-game claim fan-out.
 
-import { isConfigured, TIE_WINDOW_MS } from "./config.js";
+import { isConfigured, MIN_CLAIM_INTERVAL_MS, TIE_WINDOW_MS } from "./config.js";
 import * as db from "./store.js";
 import * as discord from "./discord.js";
 import {
@@ -22,7 +22,7 @@ import {
   utcDayKey,
   utcHourToLocalRange,
 } from "./util.js";
-import { BUCKETS, bucketOHLC, claimRows, sortRows } from "./series.js";
+import { BUCKETS, bucketOHLC, claimRows, groupRuns, sortRows } from "./series.js";
 import { barChart, candleChart, leadArea, legend } from "./charts.js";
 import { buildExport, countdownToClaims, parseImport } from "./importer.js";
 
@@ -257,12 +257,28 @@ function buildSeed(text, endsAt, myName) {
   let players = parsed.players;
   let claims = parsed.claims;
   let firstUnknown = false;
+  let total = null;
 
   if (parsed.kind === "countdown") {
-    const conv = countdownToClaims(parsed, endsAt);
+    // The log counted down to some instant, which is not necessarily this
+    // game's deadline — importing the same history into games with different
+    // end dates has to keep the original anchor.
+    const anchorRaw = $("new-anchor").value;
+    const anchorMs = anchorRaw ? new Date(anchorRaw).getTime() : endsAt;
+    if (anchorRaw && !Number.isFinite(anchorMs)) {
+      return { error: "Couldn't read the 'counted down to' date." };
+    }
+    const totalRaw = $("new-total").value.trim().replace(/[, ]/g, "");
+    const totalOverride = totalRaw ? Number(totalRaw) : undefined;
+    if (totalRaw && !(Number.isFinite(totalOverride) && totalOverride > 0)) {
+      return { error: "'Starting seconds' must be a positive number." };
+    }
+
+    const conv = countdownToClaims(parsed, anchorMs, totalOverride);
     players = conv.players;
     claims = conv.claims;
     firstUnknown = conv.firstUnknown;
+    total = conv.total;
   }
 
   // Put whoever matches the creator's name in slot 0.
@@ -279,7 +295,10 @@ function buildSeed(text, endsAt, myName) {
       claimCount: claims?.length ?? 0,
       kind: parsed.kind,
       firstUnknown,
+      total,
       matchedName: mineIdx >= 0,
+      firstAt: claims?.length ? Math.min(...claims.map((c) => c.at)) : null,
+      lastAt: claims?.length ? Math.max(...claims.map((c) => c.at)) : null,
     },
   };
 }
@@ -310,10 +329,19 @@ function updateImportPreview() {
   }
 
   const s = seed.summary;
+  const span =
+    s.firstAt && s.lastAt
+      ? `<div class="ip-note">Spans ${new Date(s.firstAt).toLocaleString()} → ` +
+        `${new Date(s.lastAt).toLocaleString()}${
+          s.total ? `, from a ${fmtDuration(s.total)} countdown` : ""
+        }.</div>`
+      : "";
+
   box.className = "import-preview good";
   box.innerHTML =
     `✓ Read ${s.claimCount ? `<strong>${s.claimCount}</strong> clicks` : "totals"} for ` +
     s.players.map((p) => `<strong>${esc(p.name)}</strong> ${fmtDuration(p.seconds)}`).join(" vs ") +
+    span +
     (s.players.length > 1
       ? `<div class="ip-note">${esc(s.players[0].name)} is you; ` +
         `${esc(s.players[1].name)}'s history is applied when they join with the game code.</div>`
@@ -419,12 +447,36 @@ function pendingThrows() {
   return out;
 }
 
+/** Milliseconds left on my per-player cooldown in this game (0 if ready). */
+function cooldownLeft(g) {
+  const mine = g.state?.lastBy?.[me.id];
+  if (!mine) return 0;
+  return Math.max(0, MIN_CLAIM_INTERVAL_MS - (db.now() - mine));
+}
+
 /** Games a click would actually land in right now. */
 function claimableGames() {
   return roster
     .filter((r) => r.synced !== false)
     .map((r) => games.get(r.code))
-    .filter((g) => g && g.meta && !isOver(g) && !(g.state?.duel?.status === "open"));
+    .filter(
+      (g) =>
+        g &&
+        g.meta &&
+        !isOver(g) &&
+        !(g.state?.duel?.status === "open") &&
+        cooldownLeft(g) === 0
+    );
+}
+
+/** Synced games blocked purely by the cooldown — used for the countdown label. */
+function coolingGames() {
+  return roster
+    .filter((r) => r.synced !== false)
+    .map((r) => games.get(r.code))
+    .filter(
+      (g) => g && g.meta && !isOver(g) && !(g.state?.duel?.status === "open") && cooldownLeft(g) > 0
+    );
 }
 
 // --- The claim action -------------------------------------------------------
@@ -618,18 +670,21 @@ function render() {
 
 function renderHub() {
   const targets = claimableGames();
+  const cooling = coolingGames();
   const blocked = pendingThrows();
-  const totalOnClock = targets.reduce((sum, g) => sum + onClock(g), 0);
-  const anyHot = targets.some((g) => multiplierAt(g.code, db.now()) > 1);
+  // The clock keeps ticking during a cooldown, so keep those games in the total.
+  const shown = targets.length ? targets : cooling;
+  const totalOnClock = shown.reduce((sum, g) => sum + onClock(g), 0);
+  const anyHot = shown.some((g) => multiplierAt(g.code, db.now()) > 1);
 
   $("clock").textContent = fmtDuration(totalOnClock);
   $("clock").classList.toggle("hot", anyHot);
 
   const syncedCount = roster.filter((r) => r.synced !== false).length;
   $("clock-label").textContent =
-    targets.length > 1 ? `On the clock across ${targets.length} games` : "On the clock";
+    shown.length > 1 ? `On the clock across ${shown.length} games` : "On the clock";
 
-  const hotGames = targets.filter((g) => multiplierAt(g.code, db.now()) > 1);
+  const hotGames = shown.filter((g) => multiplierAt(g.code, db.now()) > 1);
   $("clock-sub").innerHTML = hotGames.length
     ? `⚡ 2x active in ${hotGames.map((g) => esc(gameLabel(g))).join(", ")}`
     : targets.length
@@ -645,6 +700,14 @@ function renderHub() {
     btn.querySelector(".btn-claim-text").textContent = "THROW TO CONTINUE";
     $("btn-claim-sub").textContent = `${blocked.length} duel${blocked.length > 1 ? "s" : ""} waiting on you`;
     note.textContent = "Claiming is locked until you've picked rock, paper or scissors.";
+  } else if (!targets.length && cooling.length) {
+    // Nothing to claim into only because the cooldown is still running.
+    const left = Math.max(...cooling.map(cooldownLeft));
+    btn.disabled = true;
+    btn.classList.remove("hot");
+    btn.querySelector(".btn-claim-text").textContent = (left / 1000).toFixed(1) + "s";
+    $("btn-claim-sub").textContent = "cooling down";
+    note.textContent = `You have to wait ${MIN_CLAIM_INTERVAL_MS / 1000}s between your own claims. Your opponent doesn't.`;
   } else if (!targets.length) {
     btn.disabled = true;
     btn.querySelector(".btn-claim-text").textContent = "CLAIM";
@@ -1171,27 +1234,64 @@ function renderDetail() {
     })
     .join("");
 
-  // Feed
-  const recent = [...(g.claims || [])].reverse().slice(0, 15);
+  // Feed. Consecutive claims by the same player collapse into one row carrying
+  // the combined total; the individual splits stay available behind a toggle.
   const escrowedId = g.state?.duel?.status === "open" ? g.state.duel.disputedClaimId : null;
-  $("feed").innerHTML = recent.length
-    ? recent
-        .map((c) => {
-          const who = g.players?.[c.by]?.name || "?";
-          const tags =
-            (c.multiplier > 1 ? '<span class="f-tag x2">2x</span>' : "") +
-            (c.viaDuel ? '<span class="f-tag duel">DUEL</span>' : "") +
-            (c.status === "void" ? '<span class="f-tag duel">LOST</span>' : "") +
-            (c.id === escrowedId ? '<span class="f-tag duel">ESCROW</span>' : "");
-          return `<li>
-            <span class="f-who">${esc(who)}</span>
-            <span class="f-amt">${fmtDuration(c.seconds)}</span>
-            ${tags}
-            <span class="f-when">${fmtAgo(db.now() - c.at)}</span>
-          </li>`;
-        })
-        .join("")
-    : `<li class="feed-empty">No claims yet.</li>`;
+  const feedRows = claimRows(g.claims || [], me.id);
+  const runs = groupRuns(feedRows).reverse().slice(0, 15);
+
+  setHTML(
+    "feed",
+    runs.length
+      ? runs
+          .map((run) => {
+            const who = g.players?.[run.by]?.name || "?";
+            const tags =
+              (run.anyDoubled ? '<span class="f-tag x2">2x</span>' : "") +
+              (run.anyDuel ? '<span class="f-tag duel">DUEL</span>' : "") +
+              (run.items.some((i) => i.id === escrowedId)
+                ? '<span class="f-tag duel">ESCROW</span>'
+                : "");
+
+            if (run.count === 1) {
+              return `<li>
+                <span class="f-who">${esc(who)}</span>
+                <span class="f-amt">${fmtDuration(run.seconds)}</span>
+                ${tags}
+                <span class="f-when">${fmtAgo(db.now() - run.to)}</span>
+              </li>`;
+            }
+
+            const splits = run.items
+              .slice()
+              .reverse()
+              .map(
+                (i) => `<li class="split">
+                  <span class="split-n">#${i.order}</span>
+                  <span class="f-amt">${fmtDuration(i.seconds)}</span>
+                  ${i.multiplier > 1 ? '<span class="f-tag x2">2x</span>' : ""}
+                  ${i.viaDuel ? '<span class="f-tag duel">DUEL</span>' : ""}
+                  <span class="f-when">${fmtAgo(db.now() - i.at)}</span>
+                </li>`
+              )
+              .join("");
+
+            return `<li class="run">
+              <details>
+                <summary>
+                  <span class="f-who">${esc(who)}</span>
+                  <span class="f-amt">${fmtDuration(run.seconds)}</span>
+                  <span class="f-count">${run.count} clicks</span>
+                  ${tags}
+                  <span class="f-when">${fmtAgo(db.now() - run.to)}</span>
+                </summary>
+                <ul class="splits">${splits}</ul>
+              </details>
+            </li>`;
+          })
+          .join("")
+      : `<li class="feed-empty">No claims yet.</li>`
+  );
 }
 
 function wireDetail() {

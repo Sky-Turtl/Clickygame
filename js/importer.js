@@ -206,17 +206,28 @@ function parseCountdown(raw) {
 }
 
 /**
- * Turn a parsed countdown log into claim records, given the deadline.
+ * Turn a parsed countdown log into claim records.
  *
  * Timestamps are absolute: a row with R seconds remaining happened at
- * `endsAt - R`. That makes the import line up with live play afterwards.
+ * `anchorMs - R`. That makes the import line up with live play afterwards.
  *
- * @returns {{claims:Array, players:Array, firstUnknown:boolean}}
+ * @param anchorMs      the instant the countdown was counting down TO. This is
+ *                      often the game's deadline, but not always — if you move
+ *                      the deadline, the history still counts down to the
+ *                      original date, so pass that.
+ * @param totalOverride the countdown's starting value in seconds, if known.
+ *                      Beats the value derived from the percentage column, and
+ *                      is the only way to resolve the first click when there is
+ *                      no percentage column at all.
+ * @returns {{claims:Array, players:Array, firstUnknown:boolean, total:number}}
  */
-export function countdownToClaims(parsed, endsAt) {
-  const { rows, names, total } = parsed;
+export function countdownToClaims(parsed, anchorMs, totalOverride) {
+  const { rows, names } = parsed;
   const slotOf = new Map(names.map((n, i) => [n, i]));
   const claims = [];
+
+  const total = Number.isFinite(totalOverride) && totalOverride > 0 ? totalOverride : parsed.total;
+  const endsAt = anchorMs;
 
   // What was remaining before the first logged click.
   let prev = Number.isFinite(total) && total !== null ? total : rows[0].remaining;
@@ -239,7 +250,7 @@ export function countdownToClaims(parsed, endsAt) {
     seconds: claims.filter((c) => c.slot === i).reduce((s, c) => s + c.seconds, 0),
   }));
 
-  return { claims, players, firstUnknown };
+  return { claims, players, firstUnknown, total };
 }
 
 function parseJson(raw) {

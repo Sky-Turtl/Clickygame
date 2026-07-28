@@ -13,8 +13,9 @@ import { rps } from "./rules.js";
 /**
  * Someone pressed CLAIM.
  *
- * @param state  { lastClaimAt, lastClaim, duel, endsAt }
- * @param ctx    { playerId, at, multiplier, claimId, duelId, tieWindowMs }
+ * @param state  { lastClaimAt, lastClaim, duel, endsAt, lastBy }
+ * @param ctx    { playerId, at, multiplier, claimId, duelId, tieWindowMs,
+ *                 minIntervalMs }
  * @returns new state, or undefined to abort
  */
 export function applyClaim(state, ctx) {
@@ -25,6 +26,11 @@ export function applyClaim(state, ctx) {
 
   // Hard freeze while a duel is unsettled.
   if (state.duel && state.duel.status === "open") return undefined;
+
+  // Per-player cooldown. Checked here rather than only in the UI so it holds
+  // even against a doctored client.
+  const myLast = state.lastBy?.[ctx.playerId];
+  if (myLast && ctx.at - myLast < (ctx.minIntervalMs || 0)) return undefined;
 
   const last = state.lastClaim || null;
   const lastAt = state.lastClaimAt || ctx.at;
@@ -55,6 +61,7 @@ export function applyClaim(state, ctx) {
       // whoever claims first once it's settled.
       lastClaimAt: ctx.at,
       lastClaim: null,
+      lastBy: { ...(state.lastBy || {}), [ctx.playerId]: ctx.at },
     };
   }
 
@@ -62,6 +69,7 @@ export function applyClaim(state, ctx) {
   return {
     ...state,
     lastClaimAt: ctx.at,
+    lastBy: { ...(state.lastBy || {}), [ctx.playerId]: ctx.at },
     lastClaim: {
       id: ctx.claimId,
       by: ctx.playerId,
