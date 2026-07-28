@@ -19,6 +19,37 @@ export const now = () => Date.now();
 
 export async function init() {
   console.info("[demo] running with the in-memory mock store — no Firebase involved");
+  installDemoChrome();
+}
+
+/**
+ * The demo banner and bot trigger. Built here rather than in the page so that
+ * index.html and css/styles.css carry no demo-only markup or styling.
+ */
+function installDemoChrome() {
+  if (document.getElementById("demo-flag")) return;
+
+  const style = document.createElement("style");
+  style.textContent = `
+    #demo-flag { position: fixed; left: 0; right: 0; bottom: 0; z-index: 70;
+      display: flex; gap: 10px; align-items: center; justify-content: center;
+      padding: 8px; font: 12px system-ui, sans-serif; text-align: center;
+      background: rgba(255,201,77,.14); border-top: 1px solid rgba(255,201,77,.4);
+      color: #ffc94d; }
+    #demo-flag button { font: 11px system-ui, sans-serif; cursor: pointer;
+      background: #1c2130; color: #e8ecf5; border: 1px solid #262c3d;
+      border-radius: 6px; padding: 4px 9px; }
+    .toast-host { bottom: 56px; }
+  `;
+  document.head.appendChild(style);
+
+  const bar = document.createElement("div");
+  bar.id = "demo-flag";
+  bar.innerHTML = `DEMO MODE — in-memory, no Firebase. <button type="button">Bot claims now</button>`;
+  bar.querySelector("button").addEventListener("click", () => {
+    for (const r of JSON.parse(localStorage.getItem("clicky.roster") || "[]")) botClaim(r.code);
+  });
+  document.body.appendChild(bar);
 }
 
 export function onConnectionChange(cb) {

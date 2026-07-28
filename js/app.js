@@ -1,7 +1,6 @@
 // Clicky — app shell, rendering, and the multi-game claim fan-out.
 
 import { isConfigured, MIN_CLAIM_INTERVAL_MS, TIE_WINDOW_MS } from "./config.js";
-import * as db from "./store.js";
 import * as discord from "./discord.js";
 import {
   PERIODS,
@@ -27,6 +26,17 @@ import { barChart, candleChart, leadArea, legend } from "./charts.js";
 import { buildExport, countdownToClaims, parseImport } from "./importer.js";
 
 const $ = (id) => document.getElementById(id);
+
+// `?demo` runs the whole game against an in-memory store with a practice bot —
+// no Firebase, and no risk of writing to a real game while testing.
+//
+// The store is picked here rather than in a separate demo page. dev/index.html
+// used to be a copy of this app's HTML, which silently went stale every time
+// index.html changed; a dynamic import keeps one page and one source of truth.
+// Nothing under dev/ is fetched unless ?demo is present.
+const IS_DEMO = new URLSearchParams(location.search).has("demo");
+if (IS_DEMO) globalThis.CLICKY_DEMO = true;
+const db = IS_DEMO ? await import("../dev/mock-store.js") : await import("./store.js");
 
 // --- App state --------------------------------------------------------------
 

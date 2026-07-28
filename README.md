@@ -80,9 +80,9 @@ enter the code.
 npx --yes http-server . -p 8123
 ```
 
-Then open <http://localhost:8123/dev/>. That page runs the whole game against an
-in-memory store with a practice bot — no Firebase, no accounts. It's for trying
-the mechanics and for development; the real site is `index.html`.
+Then open <http://localhost:8123/?demo>. The `?demo` flag runs the whole game
+against an in-memory store with a practice bot — no Firebase, no accounts, and no
+risk of writing to a real game. Drop the flag for the real thing.
 
 ---
 
@@ -263,7 +263,7 @@ js/store.js         Firebase reads/writes and transactions
 js/discord.js       webhook payloads
 js/app.js           screens, rendering, the claim fan-out
 js/util.js          formatting, seeded PRNG, localStorage
-dev/                demo mode: in-memory store + practice bot
+dev/mock-store.js   demo mode: in-memory store + practice bot (?demo only)
 ```
 
 `engine.js`, `rules.js`, `series.js` and `importer.js` are pure — no Firebase, no

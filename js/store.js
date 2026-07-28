@@ -79,6 +79,37 @@ export function onConnectionChange(cb) {
 
 const gameRef = (code) => ref(db, `games/${code}`);
 
+/**
+ * runTransaction, but guaranteed to have seen server data first.
+ *
+ * Firebase runs a transaction's callback against the LOCAL cache before going
+ * to the server, and if that first pass aborts (returns undefined) it
+ * short-circuits — the server is never contacted and `committed` comes back
+ * false. So any updater that aborts on missing data silently does nothing on a
+ * node this client hasn't synced yet.
+ *
+ * A get() does NOT fix this: it fetches the value but doesn't populate the sync
+ * tree the transaction reads. Only an attached listener does.
+ *
+ * Use this for every updater that can abort. Updaters whose empty branch
+ * returns a value instead (see claimAnnouncement) are already correct, because
+ * a wrong local pass just loses the race and retries against real data.
+ */
+async function syncedTransaction(nodeRef, updater) {
+  let unsub = null;
+  try {
+    await new Promise((resolve) => {
+      unsub = onValue(nodeRef, () => resolve());
+      // Don't hang a click forever on a stalled socket. Proceeding is no worse
+      // than the un-synced behaviour this helper exists to prevent.
+      setTimeout(resolve, 5000);
+    });
+    return await runTransaction(nodeRef, updater);
+  } finally {
+    if (unsub) unsub();
+  }
+}
+
 // --- Lifecycle --------------------------------------------------------------
 
 export async function gameExists(code) {
@@ -220,26 +251,9 @@ async function applyPendingSeed(code, playerId, playerName) {
   );
   if (!lock.committed) return; // already seeded, or another pass is doing it
 
-  // Attach a listener so the node is genuinely synced locally.
-  //
-  // runTransaction runs its callback against the local cache FIRST, and if that
-  // pass aborts (returns undefined) Firebase short-circuits without ever
-  // contacting the server. A plain get() does NOT populate the sync tree the
-  // transaction reads, so without a live listener here the callback sees null,
-  // aborts, and the imported history is silently dropped.
-  const unsub = onValue(seedsRef, () => {});
-  try {
-    await get(seedsRef);
-    return await consumeSeed(code, playerId, playerName, seedsRef);
-  } finally {
-    unsub();
-  }
-}
-
-async function consumeSeed(code, playerId, playerName, seedsRef) {
   let captured = null;
 
-  const res = await runTransaction(seedsRef, (seeds) => {
+  const res = await syncedTransaction(seedsRef, (seeds) => {
     if (!Array.isArray(seeds) || !seeds.length) return; // nothing parked — abort
 
     const want = String(playerName || "").trim().toLowerCase();
@@ -316,7 +330,7 @@ export async function claim(code, playerId) {
   const at = now();
   const multiplier = multiplierAt(code, at);
 
-  const result = await runTransaction(child(gameRef(code), "state"), (state) =>
+  const result = await syncedTransaction(child(gameRef(code), "state"), (state) =>
     applyClaim(state, {
       playerId,
       at,
@@ -361,7 +375,7 @@ export async function claim(code, playerId) {
 // --- Duels ------------------------------------------------------------------
 
 export async function submitThrow(code, duelId, playerId, choice) {
-  await runTransaction(child(gameRef(code), "state/duel"), (duel) =>
+  await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>
     applyThrow(duel, { duelId, playerId, choice })
   );
 }
@@ -377,7 +391,7 @@ export async function trySettleDuel(code, duelId) {
   const settleClaimId = push(child(gameRef(code), "claims")).key;
   const at = now();
 
-  const result = await runTransaction(child(gameRef(code), "state/duel"), (duel) =>
+  const result = await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>
     applySettle(duel, { at, settleClaimId, duelId })
   );
 
