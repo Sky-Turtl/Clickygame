@@ -10,7 +10,6 @@ const COLORS = {
   claim: 0x5865f2,
   claim2x: 0xfee75c,
   duel: 0xed4245,
-  duelResult: 0x57f287,
   window: 0xeb459e,
 };
 
@@ -92,25 +91,3 @@ export function notifyDuelStart(webhookUrl, { challenger, defender, potSeconds, 
   });
 }
 
-/** Duel resolved (or drawn and re-thrown). */
-export function notifyDuelResult(webhookUrl, { winner, loser, throws, potSeconds, draw, gameCode }) {
-  const line = Object.entries(throws)
-    .map(([name, t]) => `${name}: ${t}`)
-    .join("  vs  ");
-
-  return post(webhookUrl, {
-    username: "Clicky",
-    embeds: [
-      {
-        title: draw ? "🤝 Draw — throw again" : "🏆 Duel decided",
-        description: draw
-          ? `${line}\n\nStill **${fmtDuration(potSeconds)}** on the line.`
-          : `${line}\n\n**${winner.name}** takes **${fmtDuration(potSeconds)}**. ` +
-            `${loser.name} gets nothing.`,
-        color: draw ? COLORS.duel : COLORS.duelResult,
-        footer: { text: `Game ${gameCode}` },
-        timestamp: new Date().toISOString(),
-      },
-    ],
-  });
-}

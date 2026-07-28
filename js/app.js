@@ -1,6 +1,11 @@
 // Clicky — app shell, rendering, and the multi-game claim fan-out.
 
-import { isConfigured, MIN_CLAIM_INTERVAL_MS, TIE_WINDOW_MS } from "./config.js";
+import {
+  isConfigured,
+  MIN_CLAIM_INTERVAL_MS,
+  NOTIFY_CLAIM_MIN_SECONDS,
+  TIE_WINDOW_MS,
+} from "./config.js";
 import * as discord from "./discord.js";
 import {
   PERIODS,
@@ -46,8 +51,19 @@ const me = {
   discordId: store.get("discordId", ""),
 };
 
-/** Local roster: which games this browser has joined, and which are synced. */
-let roster = store.get("roster", []); // [{ code, synced }]
+/**
+ * Local roster: which games this browser has joined, and which are synced.
+ *
+ * `playerId` is per game because the same person can play from several devices:
+ * joining with a name already in the game adopts that game's existing id rather
+ * than taking the second seat. `me.id` is only the fallback for a game this
+ * device created or joined first.
+ */
+let roster = store.get("roster", []); // [{ code, synced, playerId }]
+
+/** This device's player id in a given game. */
+const myIdIn = (code) => roster.find((r) => r.code === code)?.playerId || me.id;
+const myId = (g) => myIdIn(g?.code);
 
 /** Live mirror of each game, keyed by code. */
 const games = new Map(); // code -> { meta, players, presence, state, claims, unwatch }
@@ -205,7 +221,7 @@ function wireSetup() {
         seed: seed?.data,
       });
 
-      addToRoster(code);
+      addToRoster(code, me.id);
       watchGameCode(code);
       showScreen("hub");
       toast(`Game <strong>${code}</strong> created. Send that code to your opponent.`, "good");
@@ -233,9 +249,9 @@ function wireSetup() {
       if (!(await db.gameExists(code))) throw new Error("No game with that code.");
 
       saveProfile(name, $("join-discordid").value.trim());
-      await db.joinGame({ code, player: me });
+      const playerId = await db.joinGame({ code, player: me });
 
-      addToRoster(code);
+      addToRoster(code, playerId);
       watchGameCode(code);
       showScreen("hub");
       toast(`Joined <strong>${code}</strong>. Your clicks now count here too.`, "good");
@@ -375,9 +391,9 @@ function saveProfile(name, discordId) {
 
 // --- Roster -----------------------------------------------------------------
 
-function addToRoster(code) {
+function addToRoster(code, playerId) {
   if (!roster.some((r) => r.code === code)) {
-    roster = [...roster, { code, synced: true }];
+    roster = [...roster, { code, synced: true, playerId }];
     store.set("roster", roster);
   }
 }
@@ -410,16 +426,33 @@ function watchGameCode(code) {
     if (patch.claims) onClaimsChange(g);
     render();
   });
-  db.trackPresence(code, me.id);
+  db.trackPresence(code, myIdIn(code));
 }
 
 // --- Derived helpers --------------------------------------------------------
 
 const isOver = (g) => !!g.meta?.endsAt && db.now() > g.meta.endsAt;
 
+/**
+ * The name to show for "them" across a set of games.
+ *
+ * With one opponent across every game in scope — the usual case — that's just
+ * their name. Only falls back to a generic label when the games genuinely have
+ * different opponents, or nobody has joined yet.
+ */
+function opponentLabel(list) {
+  const names = new Set();
+  for (const g of list) {
+    const opp = opponentOf(g);
+    if (opp?.name) names.add(opp.name);
+  }
+  if (names.size === 1) return { name: [...names][0], real: true };
+  return { name: list.length === 1 ? "Opponent" : "Opponents", real: false };
+}
+
 /** The other player, or null while a game is still waiting for one. */
 function opponentOf(g) {
-  const id = Object.keys(g.players || {}).find((p) => p !== me.id);
+  const id = Object.keys(g.players || {}).find((p) => p !== myId(g));
   return id ? { id, ...g.players[id] } : null;
 }
 
@@ -443,7 +476,7 @@ function onClock(g) {
 function openDuelFor(g) {
   const d = g.state?.duel;
   if (!d || d.status !== "open") return null;
-  if (d.challenger !== me.id && d.defender !== me.id) return null;
+  if (d.challenger !== myId(g) && d.defender !== myId(g)) return null;
   return d;
 }
 
@@ -452,14 +485,14 @@ function pendingThrows() {
   const out = [];
   for (const g of games.values()) {
     const d = openDuelFor(g);
-    if (d && !(d.picks || {})[me.id]) out.push({ g, duel: d });
+    if (d && !(d.picks || {})[myId(g)]) out.push({ g, duel: d });
   }
   return out;
 }
 
 /** Milliseconds left on my per-player cooldown in this game (0 if ready). */
 function cooldownLeft(g) {
-  const mine = g.state?.lastBy?.[me.id];
+  const mine = g.state?.lastBy?.[myId(g)];
   if (!mine) return 0;
   return Math.max(0, MIN_CLAIM_INTERVAL_MS - (db.now() - mine));
 }
@@ -508,7 +541,7 @@ async function doClaim() {
 
   // Fire every game in parallel so the timestamps stay as close together as
   // possible — a synced click should feel like one action, not a queue.
-  const results = await Promise.allSettled(targets.map((g) => db.claim(g.code, me.id)));
+  const results = await Promise.allSettled(targets.map((g) => db.claim(g.code, myId(g))));
 
   let banked = 0;
   let duels = 0;
@@ -522,14 +555,17 @@ async function doClaim() {
     if (r.outcome === "claim") {
       banked += r.claim.seconds;
       claimedIn.push({ g, claim: r.claim });
-      const opp = opponentOf(g);
-      discord.notifyClaim(g.meta?.webhook, {
-        actor: { name: me.name, discordId: me.discordId },
-        opponent: opp,
-        seconds: r.claim.seconds,
-        multiplier: r.claim.multiplier,
-        gameCode: g.code,
-      });
+      // Small claims aren't worth a ping — a fast back-and-forth would spam the
+      // channel with a message per click.
+      if (r.claim.seconds >= NOTIFY_CLAIM_MIN_SECONDS) {
+        discord.notifyClaim(g.meta?.webhook, {
+          actor: { name: me.name, discordId: me.discordId },
+          opponent: opponentOf(g),
+          seconds: r.claim.seconds,
+          multiplier: r.claim.multiplier,
+          gameCode: g.code,
+        });
+      }
     } else if (r.outcome === "duel") {
       duels++;
     }
@@ -561,7 +597,7 @@ function onStateChange(g) {
   // A duel I'm in just opened.
   if (d.status === "open" && !seenDuels.has(d.id)) {
     seenDuels.add(d.id);
-    if (d.challenger === me.id || d.defender === me.id) {
+    if (d.challenger === myId(g) || d.defender === myId(g)) {
       announceDuelStart(g, d);
       openDuelModal();
     }
@@ -569,14 +605,14 @@ function onStateChange(g) {
 
   // Both throws are in — race to settle it. The transaction picks one winner.
   if (d.status === "open" && d.picks && d.picks[d.challenger] && d.picks[d.defender]) {
-    db.trySettleDuel(g.code, d.id).then((r) => {
-      if (r) announceDuelOutcome(g, r);
-    });
+    // Settle it, but say nothing to Discord — the result belongs in the app, so
+    // neither of you learns who won from a phone notification.
+    db.trySettleDuel(g.code, d.id);
   }
 
   if (d.status === "resolved" && !seenResults.has(d.id)) {
     seenResults.add(d.id);
-    if (d.challenger === me.id || d.defender === me.id) renderDuelModal();
+    if (d.challenger === myId(g) || d.defender === myId(g)) renderDuelModal();
   }
 }
 
@@ -591,7 +627,7 @@ function onClaimsChange(g) {
   if (!latest) return;
 
   // Only surface the *other* player's claims, and never replay history on load.
-  if (seenBefore && latest.id !== prev && latest.by !== me.id) {
+  if (seenBefore && latest.id !== prev && latest.by !== myId(g)) {
     const who = g.players?.[latest.by]?.name || "Someone";
     toast(
       `<strong>${esc(who)}</strong> claimed ${fmtDuration(latest.seconds)} in ` +
@@ -612,30 +648,6 @@ async function announceDuelStart(g, d) {
   });
 }
 
-async function announceDuelOutcome(g, r) {
-  const d = r.duel;
-  const key = r.draw ? `duel-${d.id}-draw-${d.round}` : `duel-${d.id}-result`;
-  if (!(await db.claimAnnouncement(g.code, key))) return;
-
-  const nameOf = (id) => g.players?.[id]?.name || "?";
-  const picks = r.draw ? d.picks || {} : d.finalPicks || {};
-  const throws = {};
-  for (const [pid, t] of Object.entries(picks)) throws[nameOf(pid)] = `${THROW_EMOJI[t]} ${t}`;
-  // On a draw the picks were already cleared; fall back to the recorded throw.
-  if (r.draw && d.lastDraw?.throw) {
-    throws[nameOf(d.challenger)] = `${THROW_EMOJI[d.lastDraw.throw]} ${d.lastDraw.throw}`;
-    throws[nameOf(d.defender)] = `${THROW_EMOJI[d.lastDraw.throw]} ${d.lastDraw.throw}`;
-  }
-
-  discord.notifyDuelResult(g.meta?.webhook, {
-    winner: { name: nameOf(d.winner) },
-    loser: { name: nameOf(d.loser) },
-    throws,
-    potSeconds: d.potSeconds,
-    draw: r.draw,
-    gameCode: g.code,
-  });
-}
 
 /** Watch for 2x windows opening and closing, and announce the transition once. */
 async function checkWindows(g) {
@@ -691,8 +703,13 @@ function renderHub() {
   $("clock").classList.toggle("hot", anyHot);
 
   const syncedCount = roster.filter((r) => r.synced !== false).length;
+  // With several games synced this is the SUM of their clocks, so it climbs by
+  // one second per game per second. Say so — otherwise it just reads as time
+  // running fast.
   $("clock-label").textContent =
-    shown.length > 1 ? `On the clock across ${shown.length} games` : "On the clock";
+    shown.length > 1
+      ? `On the clock — ${shown.length} games combined (${shown.length}s per second)`
+      : "On the clock";
 
   const hotGames = shown.filter((g) => multiplierAt(g.code, db.now()) > 1);
   $("clock-sub").innerHTML = hotGames.length
@@ -770,7 +787,7 @@ function renderGameList() {
 
       const { rows } = totalsFor(g);
       const opp = opponentOf(g);
-      const mine = rows[me.id]?.all.claimed || 0;
+      const mine = rows[myId(g)]?.all.claimed || 0;
       const theirs = opp ? rows[opp.id]?.all.claimed || 0 : 0;
       const lead = mine - theirs;
       const over = isOver(g);
@@ -862,7 +879,7 @@ function renderRejoin() {
       }
       const { rows } = totalsFor(g);
       const opp = opponentOf(g);
-      const mine = rows[me.id]?.all.claimed || 0;
+      const mine = rows[myId(g)]?.all.claimed || 0;
       const theirs = opp ? rows[opp.id]?.all.claimed || 0 : 0;
       const over = isOver(g);
       const remain = g.meta.endsAt - db.now();
@@ -964,15 +981,12 @@ function renderCharts(list, single) {
     const escrowed = g.state?.duel?.status === "open" ? g.state.duel.disputedClaimId : null;
     for (const c of g.claims || []) {
       if (c.status !== "settled" || c.id === escrowed) continue;
-      merged.push({ ...c, by: c.by === me.id ? "__me__" : "__them__" });
+      merged.push({ ...c, by: c.by === myId(g) ? "__me__" : "__them__" });
     }
   }
 
-  const oppName = single
-    ? opponentOf(single)?.name || "Opponent"
-    : list.length === 1
-      ? opponentOf(list[0])?.name || "Opponent"
-      : "Opponents";
+  const opp = opponentLabel(single ? [single] : list);
+  const oppName = opp.name;
   const meName = me.name || "You";
 
   // --- per-click bars ---
@@ -1000,7 +1014,7 @@ function renderCharts(list, single) {
         `start and end, wick spans its high and low within that ${bucket.label.toLowerCase()}. ` +
         `Blue means your lead grew.`
       : `Above the dashed line ${esc(meName)} is ahead; below it ${esc(oppName)} ${
-          list.length > 1 || oppName.endsWith("s") ? "are" : "is"
+          opp.real ? "is" : "are"
         }.`;
   setHTML("chart-lead-note", note);
 }
@@ -1018,12 +1032,12 @@ function renderStatsFor(list, single, tableId, gridId) {
     const ids = Object.keys(single.players || {});
     cols = ids.map((id) => ({
       key: id,
-      label: single.players[id].name + (id === me.id ? " (you)" : ""),
+      label: single.players[id].name + (id === myId(single) ? " (you)" : ""),
     }));
   } else {
     cols = [
-      { key: "__me__", label: "You" },
-      { key: "__them__", label: list.length === 1 ? "Opponent" : "Opponents" },
+      { key: "__me__", label: me.name || "You" },
+      { key: "__them__", label: opponentLabel(list).name },
     ];
   }
 
@@ -1039,7 +1053,7 @@ function renderStatsFor(list, single, tableId, gridId) {
     for (const p of PERIODS) {
       for (const id of ids) {
         const cell = rows[id][p.key];
-        const colKey = single ? id : id === me.id ? "__me__" : "__them__";
+        const colKey = single ? id : id === myId(g) ? "__me__" : "__them__";
         if (!grid[p.key][colKey]) continue;
         grid[p.key][colKey].claimed += cell.claimed;
         grid[p.key][colKey].actual += cell.actual;
@@ -1172,7 +1186,7 @@ function renderDetail() {
   $("detail-scores").innerHTML = ids
     .map((id) => {
       const p = g.players[id];
-      const isMe = id === me.id;
+      const isMe = id === myId(g);
       const lead = ids.every((o) => rows[id].all.claimed >= rows[o].all.claimed);
       return `<div class="score ${isMe ? "me" : ""} ${lead && ids.length > 1 ? "leader" : ""}">
         <div class="score-name">
@@ -1247,7 +1261,7 @@ function renderDetail() {
   // Feed. Consecutive claims by the same player collapse into one row carrying
   // the combined total; the individual splits stay available behind a toggle.
   const escrowedId = g.state?.duel?.status === "open" ? g.state.duel.disputedClaimId : null;
-  const feedRows = claimRows(g.claims || [], me.id);
+  const feedRows = claimRows(g.claims || [], myId(g));
   const runs = groupRuns(feedRows).reverse().slice(0, 15);
 
   setHTML(
@@ -1435,8 +1449,8 @@ function activeDuel() {
 
   for (const g of games.values()) {
     const d = g.state?.duel;
-    if (!d || (d.challenger !== me.id && d.defender !== me.id)) continue;
-    if (d.status === "open" && (d.picks || {})[me.id]) return { g, duel: d };
+    if (!d || (d.challenger !== myId(g) && d.defender !== myId(g))) continue;
+    if (d.status === "open" && (d.picks || {})[myId(g)]) return { g, duel: d };
     if (d.status === "resolved" && !dismissedResults.has(d.id)) return { g, duel: d };
   }
   return null;
@@ -1461,8 +1475,8 @@ function renderDuelModal() {
 
   const { g, duel: d } = entry;
   const resolved = d.status === "resolved";
-  const myPick = (d.picks || {})[me.id];
-  const oppId = d.challenger === me.id ? d.defender : d.challenger;
+  const myPick = (d.picks || {})[myId(g)];
+  const oppId = d.challenger === myId(g) ? d.defender : d.challenger;
   const oppPick = (d.picks || {})[oppId];
   const oppName = g.players?.[oppId]?.name || "They";
 
@@ -1493,12 +1507,12 @@ function renderDuelModal() {
   const resultEl = $("rps-result");
 
   if (resolved) {
-    const iWon = d.winner === me.id;
+    const iWon = d.winner === myId(g);
     const picks = d.finalPicks || {};
     statusEl.textContent = "";
     resultEl.classList.remove("hidden");
     resultEl.innerHTML = `
-      <div class="rr-throws">${THROW_EMOJI[picks[me.id]] || "?"} vs ${THROW_EMOJI[picks[oppId]] || "?"}</div>
+      <div class="rr-throws">${THROW_EMOJI[picks[myId(g)]] || "?"} vs ${THROW_EMOJI[picks[oppId]] || "?"}</div>
       <div class="rr-verdict ${iWon ? "won" : "lost"}">${iWon ? "You take it" : "You lose it"}</div>
       <div class="rr-detail">${
         iWon
@@ -1528,7 +1542,7 @@ function wireModals() {
     const entry = activeDuel();
     if (!entry) return;
     btn.disabled = true;
-    await db.submitThrow(entry.g.code, entry.duel.id, me.id, btn.dataset.throw);
+    await db.submitThrow(entry.g.code, entry.duel.id, myId(entry.g), btn.dataset.throw);
     render();
   });
 
@@ -1545,7 +1559,7 @@ function wireModals() {
     saveProfile($("set-name").value.trim() || me.name, $("set-discordid").value.trim());
     await Promise.all(
       [...games.keys()].map((code) =>
-        db.updatePlayer(code, me.id, { name: me.name, discordId: me.discordId })
+        db.updatePlayer(code, myIdIn(code), { name: me.name, discordId: me.discordId })
       )
     );
     $("settings-modal").classList.add("hidden");

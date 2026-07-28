@@ -42,6 +42,10 @@ export const DOUBLE_WINDOWS_PER_DAY = 2;
 // Multiplier applied during those windows.
 export const DOUBLE_MULTIPLIER = 2;
 
+// Discord stays quiet for small claims — only a claim at or above this many
+// seconds is worth a notification. Set to 0 to be told about every one.
+export const NOTIFY_CLAIM_MIN_SECONDS = 30 * 60;
+
 // `dev/index.html` sets window.CLICKY_DEMO to run against the in-memory mock
 // store, so the game is playable before Firebase is set up.
 export const isConfigured = () =>

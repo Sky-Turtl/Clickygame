@@ -145,12 +145,21 @@ function seedClaims(seed, slot) {
 
 export async function joinGame({ code, player }) {
   const game = g(code);
-  game.players[player.id] = {
+  // Same name already in the game means the same person on another device —
+  // adopt their id rather than taking a second seat. Mirrors store.joinGame.
+  const want = String(player.name || "").trim().toLowerCase();
+  const sameName = Object.keys(game.players).find(
+    (id) => String(game.players[id]?.name || "").trim().toLowerCase() === want
+  );
+  const playerId = sameName || player.id;
+
+  game.players[playerId] = {
     name: player.name,
     discordId: player.discordId || "",
-    joinedAt: now(),
+    joinedAt: game.players[playerId]?.joinedAt ?? now(),
   };
   emitAll(code);
+  return playerId;
 }
 
 export function trackPresence(code, playerId) {

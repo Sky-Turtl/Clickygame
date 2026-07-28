@@ -207,22 +207,38 @@ function seedClaimsFor(seed, slot, atFallback) {
   ];
 }
 
+/**
+ * Join a game, returning the player id this device should use for it.
+ *
+ * If someone with this name is already in the game, their id is adopted rather
+ * than a new seat taken — that's what lets one person play from a phone and a
+ * laptop at once. Both devices then share a total, a cooldown, and a side in any
+ * duel. The id is per game, not global, so joining an unrelated game where a
+ * stranger happens to share your name can't hijack your identity elsewhere.
+ */
 export async function joinGame({ code, player }) {
   const playersSnap = await get(child(gameRef(code), "players"));
   const players = playersSnap.val() || {};
-  const isNew = !players[player.id];
+
+  const want = String(player.name || "").trim().toLowerCase();
+  const sameName = Object.keys(players).find(
+    (id) => String(players[id]?.name || "").trim().toLowerCase() === want
+  );
+  const playerId = sameName || player.id;
+  const isNew = !players[playerId];
 
   if (isNew && Object.keys(players).length >= 2) {
     throw new Error("This game already has two players.");
   }
 
-  await update(child(gameRef(code), `players/${player.id}`), {
+  await update(child(gameRef(code), `players/${playerId}`), {
     name: player.name,
     discordId: player.discordId || "",
-    joinedAt: players[player.id]?.joinedAt ?? serverTimestamp(),
+    joinedAt: players[playerId]?.joinedAt ?? serverTimestamp(),
   });
 
-  if (isNew) await applyPendingSeed(code, player.id, player.name);
+  if (isNew) await applyPendingSeed(code, playerId, player.name);
+  return playerId;
 }
 
 /**
