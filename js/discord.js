@@ -9,7 +9,6 @@ import { fmtDuration } from "./util.js";
 const COLORS = {
   claim: 0x5865f2,
   claim2x: 0xfee75c,
-  duel: 0xed4245,
   window: 0xeb459e,
 };
 
@@ -71,23 +70,4 @@ export function notifyWindow(webhookUrl, { opening, gameCode, players, localRang
   });
 }
 
-/** Two players claimed within the tie window — a duel has started. */
-export function notifyDuelStart(webhookUrl, { challenger, defender, potSeconds, gapMs, gameCode }) {
-  return post(webhookUrl, {
-    username: "Clicky",
-    content: [challenger, defender].map((p) => mention(p?.discordId)).filter(Boolean).join(" "),
-    embeds: [
-      {
-        title: "⚔️ CONTESTED — rock paper scissors",
-        description:
-          `**${challenger.name}** claimed ${(gapMs / 1000).toFixed(1)}s after **${defender.name}**.\n` +
-          `**${fmtDuration(potSeconds)}** is in escrow. Winner takes all.\n\n` +
-          `_Nobody can claim again until both of you throw._`,
-        color: COLORS.duel,
-        footer: { text: `Game ${gameCode}` },
-        timestamp: new Date().toISOString(),
-      },
-    ],
-  });
-}
 

@@ -597,10 +597,9 @@ function onStateChange(g) {
   // A duel I'm in just opened.
   if (d.status === "open" && !seenDuels.has(d.id)) {
     seenDuels.add(d.id);
-    if (d.challenger === myId(g) || d.defender === myId(g)) {
-      announceDuelStart(g, d);
-      openDuelModal();
-    }
+    // Deliberately no Discord post — duels are handled entirely in the app, so
+    // neither player learns about a contested claim from a phone notification.
+    if (d.challenger === myId(g) || d.defender === myId(g)) openDuelModal();
   }
 
   // Both throws are in — race to settle it. The transaction picks one winner.
@@ -637,16 +636,6 @@ function onClaimsChange(g) {
   }
 }
 
-async function announceDuelStart(g, d) {
-  if (!(await db.claimAnnouncement(g.code, `duel-${d.id}-start`))) return;
-  discord.notifyDuelStart(g.meta?.webhook, {
-    challenger: { name: g.players?.[d.challenger]?.name || "?", discordId: g.players?.[d.challenger]?.discordId },
-    defender: { name: g.players?.[d.defender]?.name || "?", discordId: g.players?.[d.defender]?.discordId },
-    potSeconds: d.potSeconds,
-    gapMs: d.gapMs,
-    gameCode: g.code,
-  });
-}
 
 
 /** Watch for 2x windows opening and closing, and announce the transition once. */
@@ -1438,121 +1427,149 @@ function wireHub() {
   });
 }
 
-// --- Duel modal -------------------------------------------------------------
-
-let modalDuelKey = null;
-
-/** The duel to show: first one awaiting my throw, else an unseen result. */
-function activeDuel() {
-  const waiting = pendingThrows();
-  if (waiting.length) return waiting[0];
-
-  for (const g of games.values()) {
-    const d = g.state?.duel;
-    if (!d || (d.challenger !== myId(g) && d.defender !== myId(g))) continue;
-    if (d.status === "open" && (d.picks || {})[myId(g)]) return { g, duel: d };
-    if (d.status === "resolved" && !dismissedResults.has(d.id)) return { g, duel: d };
-  }
-  return null;
-}
+// --- Duel modals (one per active duel) --------------------------------------
 
 const dismissedResults = new Set();
 
+/** All duels I'm involved in that should have a visible modal. */
+function allActiveDuels() {
+  const out = [];
+  for (const g of games.values()) {
+    const d = g.state?.duel;
+    if (!d || (d.challenger !== myId(g) && d.defender !== myId(g))) continue;
+    if (d.status === "open") out.push({ g, duel: d });
+    else if (d.status === "resolved" && !dismissedResults.has(d.id)) out.push({ g, duel: d });
+  }
+  return out;
+}
+
 function openDuelModal() {
-  if (activeDuel()) $("rps-modal").classList.remove("hidden");
   renderDuelModal();
 }
 
 function renderDuelModal() {
-  const modal = $("rps-modal");
-  const entry = activeDuel();
+  const host = $("rps-host");
+  const entries = allActiveDuels();
 
-  if (!entry) {
-    modal.classList.add("hidden");
-    modalDuelKey = null;
-    return;
+  // Remove modals for duels that are no longer active.
+  const activeKeys = new Set(entries.map((e) => `duel-${e.g.code}-${e.duel.id}`));
+  for (const el of [...host.children]) {
+    if (!activeKeys.has(el.id)) el.remove();
   }
 
-  const { g, duel: d } = entry;
-  const resolved = d.status === "resolved";
-  const myPick = (d.picks || {})[myId(g)];
-  const oppId = d.challenger === myId(g) ? d.defender : d.challenger;
-  const oppPick = (d.picks || {})[oppId];
-  const oppName = g.players?.[oppId]?.name || "They";
+  for (const entry of entries) {
+    const { g, duel: d } = entry;
+    const key = `duel-${g.code}-${d.id}`;
+    const resolved = d.status === "resolved";
+    const myPick = (d.picks || {})[myId(g)];
+    const oppId = d.challenger === myId(g) ? d.defender : d.challenger;
+    const oppPick = (d.picks || {})[oppId];
+    const oppName = g.players?.[oppId]?.name || "They";
 
-  // Force the modal open when it needs a throw, or when the result just landed.
-  // Once you've thrown and are only waiting, dismissing it stays dismissed.
-  if (!myPick || resolved) modal.classList.remove("hidden");
+    let modal = $(key);
+    if (!modal) {
+      modal = document.createElement("div");
+      modal.className = "modal-backdrop";
+      modal.id = key;
+      modal.innerHTML = `
+        <div class="modal" role="dialog" aria-modal="true">
+          <h2>⚔️ Contested claim</h2>
+          <p class="duel-game" data-el="game"></p>
+          <p class="modal-sub" data-el="sub"></p>
+          <div class="pot" data-el="pot"></div>
+          <div class="throws" data-el="throws">
+            <button class="throw" data-throw="rock"><span>🪨</span>Rock</button>
+            <button class="throw" data-throw="paper"><span>📄</span>Paper</button>
+            <button class="throw" data-throw="scissors"><span>✂️</span>Scissors</button>
+          </div>
+          <p class="modal-status" data-el="status"></p>
+          <div class="rps-result hidden" data-el="result"></div>
+          <div class="modal-actions">
+            <div class="spacer"></div>
+            <button type="button" class="btn btn-ghost hidden" data-el="dismiss">Close</button>
+          </div>
+          <p class="modal-lock" data-el="lock">You can't claim again until you've thrown.</p>
+        </div>`;
+      host.appendChild(modal);
 
-  $("rps-game").textContent = gameLabel(g);
-  $("rps-sub").innerHTML = resolved
-    ? ""
-    : `<strong>${esc(oppName)}</strong> and you claimed within ` +
-      `${(d.gapMs / 1000).toFixed(1)}s of each other. Rock paper scissors, best of one — ` +
-      `winner takes the whole pot.`;
+      // Wire throw buttons for this modal.
+      const throwsEl = modal.querySelector('[data-el="throws"]');
+      throwsEl.addEventListener("click", async (e) => {
+        const btn = e.target.closest(".throw");
+        if (!btn || btn.disabled) return;
+        const cur = games.get(g.code);
+        const curDuel = cur?.state?.duel;
+        if (!curDuel || curDuel.id !== d.id) return;
+        btn.disabled = true;
+        await db.submitThrow(g.code, d.id, myId(g), btn.dataset.throw);
+        render();
+      });
 
-  $("rps-pot").innerHTML = `<div class="pot-label">In escrow${d.round > 1 ? ` · round ${d.round}` : ""}</div>
-    <div class="pot-value">${fmtDuration(d.potSeconds)}</div>`;
+      // Wire dismiss button.
+      modal.querySelector('[data-el="dismiss"]').addEventListener("click", () => {
+        const cur = games.get(g.code);
+        const curDuel = cur?.state?.duel;
+        if (curDuel?.status === "resolved") dismissedResults.add(curDuel.id);
+        modal.remove();
+        render();
+      });
+    }
 
-  // Throw buttons
-  const throwsEl = $("rps-throws");
-  throwsEl.classList.toggle("hidden", resolved);
-  throwsEl.querySelectorAll(".throw").forEach((b) => {
-    b.disabled = !!myPick || resolved;
-    b.classList.toggle("picked", myPick === b.dataset.throw);
-  });
+    const el = (name) => modal.querySelector(`[data-el="${name}"]`);
 
-  // Status + result
-  const statusEl = $("rps-status");
-  const resultEl = $("rps-result");
+    el("game").textContent = gameLabel(g);
+    el("sub").innerHTML = resolved
+      ? ""
+      : `<strong>${esc(oppName)}</strong> and you claimed within ` +
+        `${(d.gapMs / 1000).toFixed(1)}s of each other. Rock paper scissors, best of one — ` +
+        `winner takes the whole pot.`;
 
-  if (resolved) {
-    const iWon = d.winner === myId(g);
-    const picks = d.finalPicks || {};
-    statusEl.textContent = "";
-    resultEl.classList.remove("hidden");
-    resultEl.innerHTML = `
-      <div class="rr-throws">${THROW_EMOJI[picks[myId(g)]] || "?"} vs ${THROW_EMOJI[picks[oppId]] || "?"}</div>
-      <div class="rr-verdict ${iWon ? "won" : "lost"}">${iWon ? "You take it" : "You lose it"}</div>
-      <div class="rr-detail">${
-        iWon
-          ? `${fmtDuration(d.potSeconds)} banked. ${esc(oppName)} gets nothing.`
-          : `${esc(oppName)} takes ${fmtDuration(d.potSeconds)}.`
-      }</div>`;
-    $("rps-dismiss").classList.remove("hidden");
-    $("rps-lock").classList.add("hidden");
-  } else {
-    resultEl.classList.add("hidden");
-    $("rps-dismiss").classList.toggle("hidden", !myPick);
-    $("rps-lock").classList.toggle("hidden", !!myPick);
-    if (!myPick) {
-      statusEl.textContent = oppPick ? `${oppName} has thrown. Your move.` : "Pick your throw.";
+    el("pot").innerHTML = `<div class="pot-label">In escrow${d.round > 1 ? ` · round ${d.round}` : ""}</div>
+      <div class="pot-value">${fmtDuration(d.potSeconds)}</div>`;
+
+    // Throw buttons
+    const throwsEl = el("throws");
+    throwsEl.classList.toggle("hidden", resolved);
+    throwsEl.querySelectorAll(".throw").forEach((b) => {
+      b.disabled = !!myPick || resolved;
+      b.classList.toggle("picked", myPick === b.dataset.throw);
+    });
+
+    // Status + result
+    const statusEl = el("status");
+    const resultEl = el("result");
+    const dismissEl = el("dismiss");
+    const lockEl = el("lock");
+
+    if (resolved) {
+      const iWon = d.winner === myId(g);
+      const picks = d.finalPicks || {};
+      statusEl.textContent = "";
+      resultEl.classList.remove("hidden");
+      resultEl.innerHTML = `
+        <div class="rr-throws">${THROW_EMOJI[picks[myId(g)]] || "?"} vs ${THROW_EMOJI[picks[oppId]] || "?"}</div>
+        <div class="rr-verdict ${iWon ? "won" : "lost"}">${iWon ? "You take it" : "You lose it"}</div>
+        <div class="rr-detail">${
+          iWon
+            ? `${fmtDuration(d.potSeconds)} banked. ${esc(oppName)} gets nothing.`
+            : `${esc(oppName)} takes ${fmtDuration(d.potSeconds)}.`
+        }</div>`;
+      dismissEl.classList.remove("hidden");
+      lockEl.classList.add("hidden");
     } else {
-      statusEl.textContent = `Locked in ${THROW_EMOJI[myPick]}. Waiting for ${oppName}…`;
+      resultEl.classList.add("hidden");
+      dismissEl.classList.add("hidden");
+      lockEl.classList.toggle("hidden", !!myPick);
+      if (!myPick) {
+        statusEl.textContent = oppPick ? `${oppName} has thrown. Your move.` : "Pick your throw.";
+      } else {
+        statusEl.textContent = `Locked in ${THROW_EMOJI[myPick]}. Waiting for ${oppName}…`;
+      }
     }
   }
-
-  modalDuelKey = `${g.code}:${d.id}:${d.round}:${d.status}`;
 }
 
 function wireModals() {
-  $("rps-throws").addEventListener("click", async (e) => {
-    const btn = e.target.closest(".throw");
-    if (!btn || btn.disabled) return;
-    const entry = activeDuel();
-    if (!entry) return;
-    btn.disabled = true;
-    await db.submitThrow(entry.g.code, entry.duel.id, myId(entry.g), btn.dataset.throw);
-    render();
-  });
-
-  $("rps-dismiss").addEventListener("click", () => {
-    const entry = activeDuel();
-    if (entry?.duel.status === "resolved") dismissedResults.add(entry.duel.id);
-    $("rps-modal").classList.add("hidden");
-    render();
-  });
-
   $("settings-cancel").addEventListener("click", () => $("settings-modal").classList.add("hidden"));
   $("settings-form").addEventListener("submit", async (e) => {
     e.preventDefault();

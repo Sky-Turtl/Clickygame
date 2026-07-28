@@ -314,30 +314,8 @@
 
 </div>
 
-<!-- ================= RPS MODAL ================= -->
-<div class="modal-backdrop hidden" id="rps-modal">
-  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="rps-title">
-    <h2 id="rps-title">⚔️ Contested claim</h2>
-    <p class="duel-game" id="rps-game"></p>
-    <p class="modal-sub" id="rps-sub"></p>
-
-    <div class="pot" id="rps-pot"></div>
-
-    <div class="throws" id="rps-throws">
-      <button class="throw" data-throw="rock"><span>🪨</span>Rock</button>
-      <button class="throw" data-throw="paper"><span>📄</span>Paper</button>
-      <button class="throw" data-throw="scissors"><span>✂️</span>Scissors</button>
-    </div>
-
-    <p class="modal-status" id="rps-status"></p>
-    <div class="rps-result hidden" id="rps-result"></div>
-    <div class="modal-actions" id="rps-actions">
-      <div class="spacer"></div>
-      <button type="button" class="btn btn-ghost hidden" id="rps-dismiss">Close</button>
-    </div>
-    <p class="modal-lock" id="rps-lock">You can't claim again until you've thrown.</p>
-  </div>
-</div>
+<!-- ================= RPS MODALS (one per duel) ================= -->
+<div id="rps-host"></div>
 
 <!-- ================= SETTINGS MODAL ================= -->
 <div class="modal-backdrop hidden" id="settings-modal">
