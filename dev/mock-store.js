@@ -6,7 +6,16 @@
 
 import { DUEL_TIMEOUT_MS, TIE_WINDOW_MS } from "../js/config.js";
 import { multiplierAt } from "../js/rules.js";
-import { applyClaim, applyDoubleChoice, applyDuelTimeout, applySettle, applyThrow } from "../js/engine.js";
+import {
+  applyClaim,
+  applyDoubleChoice,
+  applyDuelActivity,
+  applyDuelTimeout,
+  applyReactionClear,
+  applySettle,
+  applyStartReaction,
+  applyThrow,
+} from "../js/engine.js";
 
 const BOT = "bot_opponent";
 const clone = (v) => JSON.parse(JSON.stringify(v ?? null));
@@ -295,6 +304,31 @@ export async function checkDuelTimeout(code, duelId) {
   return { timedOut: true, duel: clone(duel) };
 }
 
+export async function checkReactionStart(code, duelId, playerId, iAmClear) {
+  const game = g(code);
+  const cleared = applyReactionClear(game.state.duel, { duelId, playerId, clear: iAmClear });
+  if (cleared !== undefined) game.state = { ...game.state, duel: cleared };
+
+  const started = applyStartReaction(game.state.duel, { duelId, at: now() });
+  if (started !== undefined) {
+    game.state = { ...game.state, duel: started };
+    emitAll(code);
+    scheduleBotThrow(code, duelId);
+  } else if (cleared !== undefined) {
+    emitAll(code);
+  }
+  return clone(game.state.duel);
+}
+
+export async function pingDuelActivity(code, duelId) {
+  const game = g(code);
+  const next = applyDuelActivity(game.state.duel, { duelId, at: now() });
+  if (next !== undefined) {
+    game.state = { ...game.state, duel: next };
+    emitAll(code);
+  }
+}
+
 function creditDuelWin(game, duel, settleClaimId, at) {
   const mult = duel.payoutMultiplier || 1;
   game.claims[duel.disputedClaimId].status = "void";
@@ -405,6 +439,12 @@ function scheduleBotThrow(code, duelId) {
   // Reaction needs the bot to wait for "go" and then react with some
   // human-ish lag, not just fire on a flat random timer like the other games.
   if (duel.game === "reaction") {
+    // The bot only ever plays one game at a time, so it's always clear to
+    // start — report that the same way a real client would.
+    if (!duel.goAt) {
+      checkReactionStart(code, duelId, BOT, true);
+      return;
+    }
     const wait = Math.max(0, duel.goAt - now()) + 150 + Math.random() * 400;
     setTimeout(() => {
       const cur = g(code).state.duel;

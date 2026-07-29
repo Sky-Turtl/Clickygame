@@ -141,7 +141,11 @@ export function applyClaim(state, ctx) {
       createdAt: ctx.at,
       picks: null,
     };
-    if (game === "reaction") duel.goAt = ctx.at + reactionDelay(ctx.duelId, 1);
+    // Reaction's goAt isn't set here: a player already mid-duel elsewhere
+    // shouldn't have a reaction clock silently running against them, so it
+    // waits on both sides reporting clear — see applyReactionClear/
+    // applyStartReaction, driven by store.checkReactionStart.
+    if (game === "reaction") duel.reactionClear = {};
     // Tracks the start of the *current* round for timeout purposes — reset on
     // every redraw so a long multi-round duel doesn't get cut off mid-stride.
     duel.roundStartAt = ctx.at;
@@ -205,7 +209,12 @@ export function applySettle(duel, ctx) {
       picks: null,
       roundStartAt: ctx.at,
     };
-    if (duel.game === "reaction") next.goAt = ctx.at + reactionDelay(duel.id, next.round);
+    if (duel.game === "reaction") {
+      // Re-gate the next round too — either player may have picked up
+      // another duel in the meantime.
+      delete next.goAt;
+      next.reactionClear = {};
+    }
     return next;
   }
 
@@ -303,7 +312,8 @@ export function applyDuelTimeout(state, ctx) {
   const duel = state.duel;
 
   if (duel.status === "double_offer") {
-    const elapsed = ctx.at - (duel.decidedAt || 0);
+    const startedAt = Math.max(duel.decidedAt || 0, duel.lastActivityAt || 0);
+    const elapsed = ctx.at - startedAt;
     if (elapsed < ctx.timeoutMs) return undefined;
     return {
       ...state,
@@ -320,7 +330,13 @@ export function applyDuelTimeout(state, ctx) {
 
   if (duel.status !== "open") return undefined;
 
-  const elapsed = ctx.at - (duel.roundStartAt || duel.createdAt);
+  // A reaction round that hasn't been given its goAt yet isn't running —
+  // it's still waiting on both sides to clear their other duels (see
+  // applyStartReaction) — so it can't time out.
+  if (duel.game === "reaction" && !duel.goAt) return undefined;
+
+  const startedAt = Math.max(duel.roundStartAt || duel.createdAt, duel.lastActivityAt || 0);
+  const elapsed = ctx.at - startedAt;
   if (elapsed < ctx.timeoutMs) return undefined;
 
   const picks = duel.picks || {};
@@ -358,4 +374,36 @@ export function applyDuelTimeout(state, ctx) {
     duel: null,
     voidedClaimId: duel.disputedClaimId,
   };
+}
+
+/**
+ * A player reports whether *they personally* are free to start a reaction
+ * round — i.e. they have no other open duel elsewhere. Only that player's own
+ * client can know this (it's derived from their own game list), so this is
+ * self-reported, one flag per player, rather than computed here.
+ *
+ * @param duel current duel node
+ * @param ctx  { duelId, playerId, clear }
+ */
+export function applyReactionClear(duel, ctx) {
+  if (!duel || duel.id !== ctx.duelId || duel.status !== "open") return undefined;
+  if (duel.game !== "reaction" || duel.goAt) return undefined;
+  if (ctx.playerId !== duel.challenger && ctx.playerId !== duel.defender) return undefined;
+  return { ...duel, reactionClear: { ...(duel.reactionClear || {}), [ctx.playerId]: !!ctx.clear } };
+}
+
+/** Once both sides have reported clear, actually start the reaction round's clock. */
+export function applyStartReaction(duel, ctx) {
+  if (!duel || duel.id !== ctx.duelId || duel.status !== "open") return undefined;
+  if (duel.game !== "reaction" || duel.goAt) return undefined;
+  const clear = duel.reactionClear || {};
+  if (!clear[duel.challenger] || !clear[duel.defender]) return undefined;
+  return { ...duel, goAt: ctx.at + reactionDelay(duel.id, duel.round || 1) };
+}
+
+/** A player interacted with the duel UI (typed, dragged, tapped) — pushes the timeout back out. */
+export function applyDuelActivity(duel, ctx) {
+  if (!duel || duel.id !== ctx.duelId) return undefined;
+  if (duel.status !== "open" && duel.status !== "double_offer") return undefined;
+  return { ...duel, lastActivityAt: ctx.at };
 }

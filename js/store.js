@@ -47,7 +47,16 @@ import {
 
 import { DUEL_TIMEOUT_MS, firebaseConfig, MIN_CLAIM_INTERVAL_MS, RECAPTCHA_SITE_KEY, TIE_WINDOW_MS } from "./config.js";
 import { multiplierAt } from "./rules.js";
-import { applyClaim, applyDoubleChoice, applyDuelTimeout, applySettle, applyThrow } from "./engine.js";
+import {
+  applyClaim,
+  applyDoubleChoice,
+  applyDuelActivity,
+  applyDuelTimeout,
+  applyReactionClear,
+  applySettle,
+  applyStartReaction,
+  applyThrow,
+} from "./engine.js";
 
 let db = null;
 let auth = null;
@@ -497,6 +506,36 @@ export async function submitDoubleChoice(code, duelId, playerId, choice) {
 
   await creditDuelWin(code, duel, settleClaimId, at);
   return { duel };
+}
+
+/**
+ * A player's client reports whether *they* are currently free to start a
+ * reaction round (no other open duel of theirs elsewhere), then — if that
+ * makes both sides clear — starts the round's clock. Only the reporting
+ * player's own client can know its half of this, since it's derived from
+ * games only that browser has loaded; the other half was already reported
+ * (or not) by the opponent's own client the same way.
+ *
+ * @returns the committed duel (whether or not it actually started), or null.
+ */
+export async function checkReactionStart(code, duelId, playerId, iAmClear) {
+  const clearResult = await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>
+    applyReactionClear(duel, { duelId, playerId, clear: iAmClear })
+  );
+  if (!clearResult.committed) return null;
+
+  const startResult = await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>
+    applyStartReaction(duel, { duelId, at: now() })
+  );
+  const duel = (startResult.committed ? startResult.snapshot.val() : clearResult.snapshot.val()) || null;
+  return duel;
+}
+
+/** A player interacted with the duel UI — pushes the 2-min timeout back out to a full window. */
+export async function pingDuelActivity(code, duelId) {
+  await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>
+    applyDuelActivity(duel, { duelId, at: now() })
+  );
 }
 
 /**
