@@ -2366,9 +2366,10 @@ function pickerHtml(d, iPicked, meId) {
   }
 }
 
-const COIN_FLIP_MS = 3000;
+const COIN_FLIP_MS = 2000;
 const COIN_FLIP_TICK_MS = 110;
 let coinFlipSeq = 0;
+const COIN_FACE = { heads: "👑", tails: "⭐" };
 
 /**
  * Animate a coin flip into `el`: alternates the shown face between heads and
@@ -2380,15 +2381,18 @@ function playCoinFlip(el, finalResult, trailingHtml) {
   const token = String(++coinFlipSeq);
   el.dataset.flipToken = token;
 
-  el.innerHTML = `<div class="coin-flip-stage"><div class="coin-face spin-loop">🪙</div></div>
+  el.innerHTML = `<div class="coin-flip-stage"><div class="coin-face spin-loop heads">${COIN_FACE.heads}</div></div>
     <div class="coin-outcome flipping heads">Heads</div>`;
   const outcomeEl = el.querySelector(".coin-outcome");
+  const faceEl = el.querySelector(".coin-face");
 
   let tick = 0;
   const interval = setInterval(() => {
     if (el.dataset.flipToken !== token) return clearInterval(interval);
     tick++;
     const face = tick % 2 === 0 ? "heads" : "tails";
+    faceEl.textContent = COIN_FACE[face];
+    faceEl.className = `coin-face spin-loop ${face}`;
     outcomeEl.textContent = face === "heads" ? "Heads" : "Tails";
     outcomeEl.className = `coin-outcome flipping ${face}`;
   }, COIN_FLIP_TICK_MS);
@@ -2396,7 +2400,7 @@ function playCoinFlip(el, finalResult, trailingHtml) {
   setTimeout(() => {
     clearInterval(interval);
     if (el.dataset.flipToken !== token) return;
-    el.innerHTML = `<div class="coin-flip-stage"><div class="coin-face settle">🪙</div></div>
+    el.innerHTML = `<div class="coin-flip-stage"><div class="coin-face settle ${finalResult}">${COIN_FACE[finalResult]}</div></div>
       <div class="coin-outcome ${finalResult}">${finalResult === "heads" ? "Heads" : "Tails"}</div>
       ${trailingHtml}`;
   }, COIN_FLIP_MS);
