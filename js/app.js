@@ -2283,18 +2283,15 @@ function renderDuelModal() {
           ${timeoutNote}
           ${doubleNote}`;
 
-        // The initial coin flip already played during the "double_offer" stage
-        // (before the winner was offered take/double). Only the double-or-
-        // nothing gamble is a genuinely new flip that needs its own animation
-        // here — a plain "take" (or a timeout) just shows the same face again.
+        // Always run the coin through its flip animation before the verdict
+        // appears — even a plain "take" (or a timeout), so the win/lose text
+        // never lands in the same instant as the status change. A double-or-
+        // nothing gamble shows a genuinely new (derived) face; a take/timeout
+        // just replays the already-decided one.
         const initialFace = d.game === "coin" ? d.detail?.result : null;
-        if (initialFace && d.doubled) {
-          const secondFace = d.doubleLost ? (initialFace === "heads" ? "tails" : "heads") : initialFace;
-          playCoinFlip(resultEl, secondFace, restHtml);
-        } else if (initialFace) {
-          resultEl.innerHTML = `<div class="coin-flip-stage"><div class="coin-face settle ${initialFace}">${COIN_FACE[initialFace]}</div></div>
-            <div class="coin-outcome ${initialFace}">${initialFace === "heads" ? "Heads" : "Tails"}</div>
-            ${restHtml}`;
+        if (initialFace) {
+          const finalFace = d.doubled ? (d.doubleLost ? (initialFace === "heads" ? "tails" : "heads") : initialFace) : initialFace;
+          playCoinFlip(resultEl, finalFace, restHtml);
         } else {
           resultEl.innerHTML = restHtml;
         }
