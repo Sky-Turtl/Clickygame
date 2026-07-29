@@ -607,32 +607,51 @@ const MINIGAME_PERIODS = [
  * The winner's claim carries `game` (which minigame decided it) and `by`
  * (the winner) — since every game is strictly 1v1, any such claim not by me
  * in a game I'm part of is a loss for me. Older duels settled before this
- * field existed fall back to "unknown" rather than being dropped.
+ * field existed have no `.game` at all, so they only count under "All
+ * minigames" — picking a specific minigame can't include them, since there's
+ * nothing recorded to match against.
  */
 function renderMinigameRecord(list) {
-  const sel = $("profile-minigame-filter");
-  if (sel.dataset.sig !== "set") {
-    sel.dataset.sig = "set";
-    sel.innerHTML =
+  const minigameSel = $("profile-minigame-filter");
+  if (minigameSel.dataset.sig !== "set") {
+    minigameSel.dataset.sig = "set";
+    minigameSel.innerHTML =
       `<option value="__all__">All minigames</option>` +
       Object.entries(DUEL_META)
         .map(([key, meta]) => `<option value="${key}">${meta.icon} ${esc(meta.label)}</option>`)
         .join("");
   }
-  const filter = sel.value || "__all__";
+  const minigameFilter = minigameSel.value || "__all__";
+
+  // Rebuilt whenever the set of games actually changes, same pattern as the
+  // hub's stats-scope selector — so it isn't yanked out from under a pick.
+  const gameSel = $("profile-game-filter");
+  const gameSig = list.map((g) => `${g.code}:${gameLabel(g)}`).join("|");
+  if (gameSel.dataset.sig !== gameSig) {
+    const keep = gameSel.value;
+    gameSel.dataset.sig = gameSig;
+    gameSel.innerHTML =
+      `<option value="__all__">All games</option>` +
+      list.map((g) => `<option value="${esc(g.code)}">${esc(gameLabel(g))}</option>`).join("");
+    if (keep && [...gameSel.options].some((o) => o.value === keep)) gameSel.value = keep;
+  }
+  const gameFilter = gameSel.value || "__all__";
 
   const now = db.now();
   const grid = {}; // periodKey -> { wins, losses }
   for (const p of MINIGAME_PERIODS) grid[p.key] = { wins: 0, losses: 0 };
+  let unknownCount = 0;
 
   for (const g of list) {
+    if (gameFilter !== "__all__" && g.code !== gameFilter) continue;
     const meId = myId(g);
     const opp = opponentOf(g);
     if (!opp) continue;
     for (const c of g.claims || []) {
       if (!c.viaDuel || c.status !== "settled") continue;
-      const gameType = c.game || "unknown";
-      if (filter !== "__all__" && gameType !== filter) continue;
+      const gameType = c.game || null;
+      if (!gameType) unknownCount++;
+      if (minigameFilter !== "__all__" && gameType !== minigameFilter) continue;
       const won = c.by === meId;
       if (!won && c.by !== opp.id) continue; // shouldn't happen in a 1v1, but don't misattribute
       const age = now - c.at;
@@ -656,6 +675,18 @@ function renderMinigameRecord(list) {
     `</tbody>`;
 
   setHTML("profile-minigame-table", head + body);
+
+  const noteEl = $("profile-minigame-unknown-note");
+  const showNote = minigameFilter !== "__all__" && unknownCount > 0;
+  noteEl.classList.toggle("hidden", !showNote);
+  if (showNote) {
+    setHTML(
+      "profile-minigame-unknown-note",
+      `${unknownCount} duel${unknownCount === 1 ? "" : "s"} in this scope ${
+        unknownCount === 1 ? "doesn't" : "don't"
+      } have a minigame type recorded (from before minigame variety shipped) and won't show up under a specific minigame — only under "All minigames".`
+    );
+  }
 }
 
 // --- Derived helpers --------------------------------------------------------
@@ -2194,4 +2225,5 @@ function wireAccount() {
   $("btn-view-profile").addEventListener("click", () => showScreen("profile"));
   $("btn-profile-back").addEventListener("click", goHome);
   $("profile-minigame-filter").addEventListener("change", () => renderProfile());
+  $("profile-game-filter").addEventListener("change", () => renderProfile());
 }

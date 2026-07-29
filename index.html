@@ -367,15 +367,21 @@
 
     <div class="section-head">
       <h2>Minigame record</h2>
-      <select id="profile-minigame-filter" class="scope-select" aria-label="Filter minigame record by game type">
-        <option value="__all__">All minigames</option>
-      </select>
+      <div class="filter-row">
+        <select id="profile-minigame-filter" class="scope-select" aria-label="Filter minigame record by minigame type">
+          <option value="__all__">All minigames</option>
+        </select>
+        <select id="profile-game-filter" class="scope-select" aria-label="Filter minigame record by which Clicky game">
+          <option value="__all__">All games</option>
+        </select>
+      </div>
     </div>
     <div class="card">
       <p class="card-sub">Wins and losses in contested-claim duels, broken down by how recent.</p>
       <div class="table-scroll">
         <table class="summary-table" id="profile-minigame-table"></table>
       </div>
+      <p class="card-sub hidden" id="profile-minigame-unknown-note"></p>
     </div>
 
     <div class="section-head">

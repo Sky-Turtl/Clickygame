@@ -493,6 +493,9 @@ input[type=date] { color-scheme: dark; }
   cursor: pointer;
   max-width: 55%;
 }
+
+.filter-row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.filter-row .scope-select { max-width: 160px; }
 .scope-select:hover { border-color: var(--accent); }
 .scope-select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
