@@ -94,6 +94,7 @@ let bucketKey = store.get("bucketKey", "1h");
   wireHub();
   wireDetail();
   wireModals();
+  wireAccount();
 
   if (!isConfigured()) {
     $("config-warning").classList.remove("hidden");
@@ -110,6 +111,7 @@ let bucketKey = store.get("bucketKey", "1h");
     dot.classList.toggle("offline", !online);
     dot.title = online ? "Connected" : "Reconnecting…";
   });
+  db.onAuthChange(onAccountChange);
 
   // Deep link: ?g=ABC123 prefills the join form.
   const linked = new URLSearchParams(location.search).get("g");
@@ -130,11 +132,12 @@ let bucketKey = store.get("bucketKey", "1h");
 // --- Screens ----------------------------------------------------------------
 
 function showScreen(which) {
-  for (const s of ["setup", "hub", "detail"]) {
+  for (const s of ["setup", "hub", "detail", "profile"]) {
     $("screen-" + s).classList.toggle("hidden", s !== which);
   }
   window.scrollTo(0, 0);
   if (which === "setup") renderRejoin();
+  if (which === "profile") renderProfile();
 }
 
 /** The main screen: the hub once you're in a game, otherwise setup. */
@@ -162,6 +165,7 @@ function switchTab(name) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   $("panel-new").classList.toggle("active", name === "new");
   $("panel-join").classList.toggle("active", name === "join");
+  $("panel-account").classList.toggle("active", name === "account");
 }
 
 function wireSetup() {
@@ -397,16 +401,22 @@ function saveProfile(name, discordId) {
 
 // --- Roster -----------------------------------------------------------------
 
+/** Save the roster locally, and to the account (if logged in) for other devices. */
+function persistRoster() {
+  store.set("roster", roster);
+  if (account) db.setAccountRoster(account.uid, rosterToObj(roster));
+}
+
 function addToRoster(code, playerId) {
   if (!roster.some((r) => r.code === code)) {
     roster = [...roster, { code, synced: true, playerId }];
-    store.set("roster", roster);
+    persistRoster();
   }
 }
 
 function removeFromRoster(code) {
   roster = roster.filter((r) => r.code !== code);
-  store.set("roster", roster);
+  persistRoster();
   games.get(code)?.unwatch?.();
   games.delete(code);
   if (!roster.length) showScreen("setup");
@@ -418,7 +428,7 @@ function isSynced(code) {
 
 function toggleSync(code) {
   roster = roster.map((r) => (r.code === code ? { ...r, synced: !isSynced(code) } : r));
-  store.set("roster", roster);
+  persistRoster();
   render();
 }
 
@@ -433,6 +443,151 @@ function watchGameCode(code) {
     render();
   });
   db.trackPresence(code, myIdIn(code));
+}
+
+// --- Account (optional cross-device login) -----------------------------------
+
+let account = null; // { uid, username } | null
+let unwatchAccountRoster = null;
+
+function rosterToObj(list) {
+  const obj = {};
+  for (const r of list) obj[r.code] = { synced: r.synced !== false, playerId: r.playerId };
+  return obj;
+}
+
+function objToRoster(obj) {
+  return Object.entries(obj || {}).map(([code, v]) => ({
+    code,
+    synced: v?.synced !== false,
+    playerId: v?.playerId,
+  }));
+}
+
+/**
+ * Fires on login/logout. Logging in merges whatever this device already had
+ * (games joined as a guest) into the account's roster, then treats the
+ * account as the source of truth going forward — the whole point being that
+ * logging in on a second device picks up every game from the first.
+ */
+async function onAccountChange(acct) {
+  account = acct;
+  renderAccountUI();
+
+  unwatchAccountRoster?.();
+  unwatchAccountRoster = null;
+  if (!acct) return;
+
+  const serverObj = await db.getAccountRoster(acct.uid);
+  const mine = rosterToObj(roster.filter((r) => !serverObj[r.code]));
+  const merged = { ...serverObj, ...mine };
+  await db.setAccountRoster(acct.uid, merged);
+
+  roster = objToRoster(merged);
+  store.set("roster", roster);
+  for (const r of roster) watchGameCode(r.code);
+
+  // Land on the hub if logging in surfaced games and we're just sitting on
+  // setup — but don't yank the screen out from under someone mid-game.
+  const onSetup = !$("screen-setup").classList.contains("hidden");
+  if (roster.length && onSetup) showScreen("hub");
+
+  // Other devices on the same account joining/leaving games shows up here too.
+  unwatchAccountRoster = db.watchAccountRoster(acct.uid, (obj) => {
+    let changed = false;
+    for (const code of Object.keys(obj)) {
+      if (!roster.some((r) => r.code === code)) {
+        roster = [...roster, { code, synced: obj[code].synced !== false, playerId: obj[code].playerId }];
+        watchGameCode(code);
+        changed = true;
+      }
+    }
+    if (changed) {
+      store.set("roster", roster);
+      render();
+    }
+  });
+
+  render();
+}
+
+/** Reflect login state in the setup tab, hub topbar button, and profile screen. */
+function renderAccountUI() {
+  $("account-logged-out").classList.toggle("hidden", !!account);
+  $("account-logged-in").classList.toggle("hidden", !account);
+  if (account) $("account-username-display").textContent = account.username;
+
+  const btn = $("btn-account");
+  if (btn) btn.textContent = account ? "👤 " + account.username : "👤";
+
+  if (!$("screen-profile").classList.contains("hidden")) renderProfile();
+}
+
+/** win / loss / tie / ongoing, from this device's point of view. */
+function gameResult(g) {
+  const ids = Object.keys(g.players || {});
+  if (!isOver(g) || ids.length < 2) return "ongoing";
+  const { rows } = totalsFor(g);
+  const mine = rows[myId(g)]?.all.claimed || 0;
+  const opp = opponentOf(g);
+  const theirs = opp ? rows[opp.id]?.all.claimed || 0 : 0;
+  if (mine === theirs) return "tie";
+  return mine > theirs ? "win" : "loss";
+}
+
+function renderProfile() {
+  if (!account) {
+    showScreen(roster.length ? "hub" : "setup");
+    return;
+  }
+  $("profile-username").textContent = account.username;
+
+  const list = roster.map((r) => games.get(r.code)).filter((g) => g && g.meta);
+  const results = list.map((g) => ({ g, result: gameResult(g) }));
+  const count = (r) => results.filter((x) => x.result === r).length;
+  const wins = count("win");
+  const losses = count("loss");
+  const ties = count("tie");
+  const ongoing = count("ongoing");
+
+  $("profile-record").innerHTML = [
+    ["Wins", String(wins)],
+    ["Losses", String(losses)],
+    ["Ties", String(ties)],
+    ["Ongoing", String(ongoing)],
+  ]
+    .map(
+      ([l, v]) =>
+        `<div class="stat"><div class="stat-label">${l}</div><div class="stat-value">${v}</div></div>`
+    )
+    .join("");
+
+  $("profile-games").innerHTML =
+    results
+      .map(({ g, result }) => {
+        const { rows } = totalsFor(g);
+        const opp = opponentOf(g);
+        const mine = rows[myId(g)]?.all.claimed || 0;
+        const theirs = opp ? rows[opp.id]?.all.claimed || 0 : 0;
+        return `
+        <div class="game-card" data-open="${esc(g.code)}">
+          <div class="gc-main">
+            <div class="gc-head">
+              <span class="gc-name">${esc(gameLabel(g))}</span>
+              <span class="gc-flag ${result}">${result.toUpperCase()}</span>
+            </div>
+            <div class="gc-scores">
+              <span class="gc-me">You ${fmtDurationShort(mine)}</span>
+              <span class="gc-them">${opp ? `${esc(opp.name)} ${fmtDurationShort(theirs)}` : "waiting for player 2"}</span>
+            </div>
+          </div>
+        </div>`;
+      })
+      .join("") || `<p class="card-sub">No games yet.</p>`;
+
+  $("profile-games").querySelectorAll("[data-open]").forEach((el) =>
+    el.addEventListener("click", () => openDetail(el.dataset.open))
+  );
 }
 
 // --- Derived helpers --------------------------------------------------------
@@ -746,6 +901,7 @@ function render() {
   if (!$("screen-setup").classList.contains("hidden")) renderRejoin();
   if (!$("screen-hub").classList.contains("hidden")) renderHub();
   if (!$("screen-detail").classList.contains("hidden")) renderDetail();
+  if (!$("screen-profile").classList.contains("hidden")) renderProfile();
   $("brand-logo").classList.toggle("clickable", roster.length > 0);
   renderDuelModal();
 }
@@ -1527,6 +1683,13 @@ function wireHub() {
     switchTab("join");
     showScreen("setup");
   });
+  $("btn-account").addEventListener("click", () => {
+    if (account) showScreen("profile");
+    else {
+      switchTab("account");
+      showScreen("setup");
+    }
+  });
   $("hub-logo").addEventListener("click", goHome);
   $("detail-logo").addEventListener("click", goHome);
   $("brand-logo").addEventListener("click", () => {
@@ -1825,4 +1988,40 @@ function wireModals() {
     $("settings-modal").classList.add("hidden");
     toast("Saved.", "good");
   });
+}
+
+function wireAccount() {
+  const err = $("account-error");
+  const busy = (b) => {
+    $("btn-signin").disabled = b;
+    $("btn-signup").disabled = b;
+  };
+
+  const run = async (fn) => {
+    err.classList.add("hidden");
+    const username = $("acct-username").value;
+    const password = $("acct-password").value;
+    busy(true);
+    try {
+      await fn(username, password);
+      $("acct-password").value = "";
+      toast(`Logged in as <strong>${esc(db.normalizeUsername(username))}</strong>.`, "good");
+    } catch (ex) {
+      err.textContent = db.authErrorMessage(ex);
+      err.classList.remove("hidden");
+    } finally {
+      busy(false);
+    }
+  };
+
+  $("btn-signin").addEventListener("click", () => run(db.signIn));
+  $("btn-signup").addEventListener("click", () => run(db.signUp));
+
+  $("btn-signout").addEventListener("click", () => db.signOutUser());
+  $("btn-profile-signout").addEventListener("click", () => {
+    db.signOutUser();
+    goHome();
+  });
+  $("btn-view-profile").addEventListener("click", () => showScreen("profile"));
+  $("btn-profile-back").addEventListener("click", goHome);
 }

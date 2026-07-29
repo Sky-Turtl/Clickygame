@@ -28,6 +28,7 @@
       <div class="tabs" role="tablist">
         <button class="tab active" data-tab="new" role="tab">New game</button>
         <button class="tab" data-tab="join" role="tab">Join a game</button>
+        <button class="tab" data-tab="account" role="tab">Account</button>
       </div>
 
       <!-- New game -->
@@ -122,6 +123,36 @@
         <button type="submit" class="btn btn-primary btn-lg">Join game</button>
         <p class="form-error hidden" id="join-error"></p>
       </form>
+
+      <!-- Account -->
+      <div class="tabpanel" id="panel-account">
+        <div id="account-logged-out">
+          <label>
+            Username
+            <input type="text" id="acct-username" maxlength="20" autocapitalize="none" spellcheck="false" placeholder="e.g. will">
+            <small>3-20 characters: lowercase letters, numbers, underscore.</small>
+          </label>
+          <label>
+            Password
+            <input type="password" id="acct-password" minlength="6" placeholder="At least 6 characters">
+          </label>
+          <div class="btn-row">
+            <button type="button" class="btn btn-ghost" id="btn-signin">Log in</button>
+            <button type="button" class="btn btn-primary" id="btn-signup">Create account</button>
+          </div>
+          <p class="form-error hidden" id="account-error"></p>
+          <p class="card-sub account-hint">
+            An account syncs your list of games across devices — log in anywhere and every game
+            you've joined shows up, no codes to re-enter. Totally optional; without one, this
+            browser is the only place your games live.
+          </p>
+        </div>
+        <div id="account-logged-in" class="hidden">
+          <p class="card-sub">Logged in as <strong id="account-username-display"></strong>.</p>
+          <button type="button" class="btn btn-ghost" id="btn-view-profile">View profile</button>
+          <button type="button" class="btn btn-ghost" id="btn-signout">Log out</button>
+        </div>
+      </div>
     </div>
 
     <!-- Games this browser is already in -->
@@ -147,6 +178,7 @@
       </div>
       <div class="topbar-right">
         <button class="btn btn-ghost" id="btn-add">+ Game</button>
+        <button class="btn btn-ghost" id="btn-account" title="Account">👤</button>
         <button class="btn btn-ghost" id="btn-settings" title="Settings">⚙</button>
       </div>
     </header>
@@ -314,6 +346,30 @@
 
     <div class="card">
       <button class="btn btn-ghost btn-lg" id="btn-leave">Leave this game</button>
+    </div>
+  </section>
+
+  <!-- ================= PROFILE ================= -->
+  <section class="screen hidden" id="screen-profile">
+    <header class="topbar">
+      <div class="topbar-left">
+        <button class="btn btn-ghost" id="btn-profile-back">←</button>
+        <span class="game-title">Profile</span>
+      </div>
+    </header>
+
+    <div class="card">
+      <p class="card-sub">Logged in as <strong id="profile-username"></strong>.</p>
+      <div class="stat-grid" id="profile-record"></div>
+    </div>
+
+    <div class="section-head">
+      <h2>Games</h2>
+    </div>
+    <div id="profile-games" class="game-list"></div>
+
+    <div class="card">
+      <button class="btn btn-ghost btn-lg" id="btn-profile-signout">Log out</button>
     </div>
   </section>
 

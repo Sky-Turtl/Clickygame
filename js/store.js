@@ -8,6 +8,10 @@
 //     claims : { [claimId]: { by, at, rawSeconds, multiplier, seconds, status } }
 //     announced: { [eventKey]: true }                  <- webhook dedupe locks
 //
+//   accounts/{uid}/
+//     username: string
+//     roster  : { [code]: { synced, playerId } }        <- cross-device game list
+//
 // Everything that two browsers can race on lives under `state` and is only ever
 // written through runTransaction, so the database serialises the conflict for us.
 
@@ -30,6 +34,11 @@ import {
 import {
   getAuth,
   signInAnonymously,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+  updateProfile,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 
 import { firebaseConfig, MIN_CLAIM_INTERVAL_MS, TIE_WINDOW_MS } from "./config.js";
@@ -37,15 +46,17 @@ import { multiplierAt } from "./rules.js";
 import { applyClaim, applySettle, applyThrow } from "./engine.js";
 
 let db = null;
+let auth = null;
 let serverOffset = 0;
 
 /** Connect. Anonymous auth is attempted but not required. */
 export async function init() {
   const app = initializeApp(firebaseConfig);
   db = getDatabase(app);
+  auth = getAuth(app);
 
   try {
-    await signInAnonymously(getAuth(app));
+    await signInAnonymously(auth);
   } catch (err) {
     // Anonymous auth not enabled — fine as long as the rules don't require it.
     console.info("[store] anonymous auth unavailable, continuing unauthenticated", err.code);
@@ -454,4 +465,97 @@ export async function claimAnnouncement(code, eventKey) {
     val ? undefined : now()
   );
   return result.committed && result.snapshot.exists();
+}
+
+// --- Accounts -----------------------------------------------------------
+//
+// A username + password is really just Firebase email/password auth wearing
+// a costume: there's no real email involved, so the username is turned into
+// a synthetic address under a fake domain. Firebase's own uniqueness check on
+// that address is what makes usernames unique — no separate lookup needed.
+// Everything under accounts/{uid} is only readable/writable by that uid (see
+// the security rules), so it's safe to key by uid directly.
+
+const USERNAME_RE = /^[a-z0-9_]{3,20}$/;
+const toAuthEmail = (username) => `${username}@clicky.invalid`;
+
+export function normalizeUsername(raw) {
+  return String(raw || "").trim().toLowerCase();
+}
+
+export function isValidUsername(username) {
+  return USERNAME_RE.test(username);
+}
+
+/** Friendlier text for the handful of auth errors a login form actually hits. */
+export function authErrorMessage(err) {
+  switch (err?.code) {
+    case "auth/email-already-in-use":
+      return "That username is taken.";
+    case "auth/weak-password":
+      return "Password needs to be at least 6 characters.";
+    case "auth/wrong-password":
+    case "auth/user-not-found":
+    case "auth/invalid-credential":
+      return "Wrong username or password.";
+    case "auth/too-many-requests":
+      return "Too many attempts — wait a bit and try again.";
+    default:
+      return err?.message || "Something went wrong.";
+  }
+}
+
+export async function signUp(username, password) {
+  const uname = normalizeUsername(username);
+  if (!isValidUsername(uname)) {
+    throw new Error("Usernames are 3-20 characters: lowercase letters, numbers, underscore.");
+  }
+  const cred = await createUserWithEmailAndPassword(auth, toAuthEmail(uname), password);
+  await updateProfile(cred.user, { displayName: uname });
+  await set(ref(db, `accounts/${cred.user.uid}/username`), uname);
+  return { uid: cred.user.uid, username: uname };
+}
+
+export async function signIn(username, password) {
+  const uname = normalizeUsername(username);
+  const cred = await signInWithEmailAndPassword(auth, toAuthEmail(uname), password);
+  return { uid: cred.user.uid, username: cred.user.displayName || uname };
+}
+
+export async function signOutUser() {
+  await signOut(auth);
+}
+
+const accountRef = (uid) => ref(db, `accounts/${uid}`);
+
+/** @param cb({uid, username} | null) — fires immediately with the current state, then on every change. */
+export function onAuthChange(cb) {
+  return onAuthStateChanged(auth, async (user) => {
+    // Anonymous sessions (from init()) don't count as "logged in" for account
+    // purposes — only a real username/password sign-in does.
+    if (!user || user.isAnonymous) {
+      cb(null);
+      return;
+    }
+    // Read the username back from the record signUp wrote, rather than
+    // trusting auth's displayName — updateProfile() doesn't reliably re-fire
+    // this listener, so displayName can still be empty on the very first
+    // event right after signing up.
+    const snap = await get(child(accountRef(user.uid), "username"));
+    cb({ uid: user.uid, username: snap.val() || user.displayName || "" });
+  });
+}
+
+/** The account's cross-device roster: { [code]: { synced, playerId } }. */
+export async function getAccountRoster(uid) {
+  const snap = await get(child(accountRef(uid), "roster"));
+  return snap.val() || {};
+}
+
+export function setAccountRoster(uid, rosterObj) {
+  return set(child(accountRef(uid), "roster"), rosterObj);
+}
+
+export function watchAccountRoster(uid, cb) {
+  return onValue(child(accountRef(uid), "roster"), (snap) => cb(snap.val() || {}));
 }

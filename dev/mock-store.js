@@ -267,6 +267,68 @@ export async function claimAnnouncement(code, eventKey) {
   return true;
 }
 
+// --- Accounts (in-memory stand-in) -------------------------------------------
+
+let mockAccount = null; // { uid, username }
+let mockRoster = {};
+const authSubs = new Set();
+
+function emitAuth() {
+  for (const cb of authSubs) cb(clone(mockAccount));
+}
+
+export function normalizeUsername(raw) {
+  return String(raw || "").trim().toLowerCase();
+}
+
+export function isValidUsername(username) {
+  return /^[a-z0-9_]{3,20}$/.test(username);
+}
+
+export function authErrorMessage(err) {
+  return err?.message || "Something went wrong.";
+}
+
+export async function signUp(username, password) {
+  const uname = normalizeUsername(username);
+  if (!isValidUsername(uname)) throw new Error("Usernames are 3-20 characters: lowercase letters, numbers, underscore.");
+  mockAccount = { uid: "demo_" + uname, username: uname };
+  emitAuth();
+  return clone(mockAccount);
+}
+
+export async function signIn(username, password) {
+  const uname = normalizeUsername(username);
+  mockAccount = { uid: "demo_" + uname, username: uname };
+  emitAuth();
+  return clone(mockAccount);
+}
+
+export async function signOutUser() {
+  mockAccount = null;
+  emitAuth();
+}
+
+export function onAuthChange(cb) {
+  authSubs.add(cb);
+  queueMicrotask(() => cb(clone(mockAccount)));
+  return () => authSubs.delete(cb);
+}
+
+export async function getAccountRoster() {
+  return clone(mockRoster);
+}
+
+export function setAccountRoster(uid, rosterObj) {
+  mockRoster = clone(rosterObj);
+  return Promise.resolve();
+}
+
+export function watchAccountRoster(uid, cb) {
+  queueMicrotask(() => cb(clone(mockRoster)));
+  return () => {};
+}
+
 // --- Bot opponent -----------------------------------------------------------
 
 function botPickFor(duel) {
