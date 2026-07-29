@@ -1021,12 +1021,58 @@ function gameLabel(g) {
   return g.meta?.name?.trim() || g.code;
 }
 
+/** mm:ss countdown display — unlike fmtDurationShort, always shows seconds. */
+function fmtCountdown(ms) {
+  const total = Math.max(0, Math.ceil(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
 function tick() {
   for (const g of games.values()) {
     checkWindows(g);
     checkDuelExpiry(g);
+    checkReactionGate(g);
   }
   render();
+}
+
+/** code -> id of the last "am I clear to start reaction" value this client reported for a duel. */
+const reactionClearReported = new Map();
+
+/**
+ * A reaction duel waits on both sides reporting they've got no other open
+ * duel elsewhere before its goAt is set (see engine.applyStartReaction). Each
+ * client can only speak for its own player, and only this device knows what
+ * other games its own player is in — so it self-reports here.
+ */
+function checkReactionGate(g) {
+  const d = g.state?.duel;
+  if (!d || d.status !== "open" || d.game !== "reaction") return;
+  if (d.goAt) {
+    reactionClearReported.delete(d.id); // started — no longer relevant, keep the map from growing
+    return;
+  }
+  const meId = myId(g);
+  if (d.challenger !== meId && d.defender !== meId) return;
+
+  const iAmClear = !hasOtherOpenDuel(g.code, d.id);
+  if (reactionClearReported.get(d.id) === iAmClear) return;
+  reactionClearReported.set(d.id, iAmClear);
+  db.checkReactionStart(g.code, d.id, meId, iAmClear);
+}
+
+/** Is this device's own player still tied up in some other unsettled duel? */
+function hasOtherOpenDuel(excludeCode, excludeDuelId) {
+  for (const g2 of games.values()) {
+    const d2 = g2.state?.duel;
+    if (!d2 || d2.id === excludeDuelId) continue;
+    if (!duelUnsettled(d2)) continue;
+    const pid2 = myId(g2);
+    if (d2.challenger === pid2 || d2.defender === pid2) return true;
+  }
+  return false;
 }
 
 /**
@@ -1954,15 +2000,91 @@ function openDuelModal() {
   renderDuelModal();
 }
 
-function renderDuelModal() {
+/** So the 2-min duel timeout doesn't fire while someone's visibly mid-action. */
+const lastActivityPing = new Map();
+function pingDuelActivity(code, duelId) {
+  const last = lastActivityPing.get(duelId) || 0;
+  const t = Date.now();
+  if (t - last < 15000) return;
+  lastActivityPing.set(duelId, t);
+  db.pingDuelActivity(code, duelId);
+}
+
+/**
+ * All active duels share one overlay so multiple at once don't stack
+ * full-screen on top of each other — a scroll-snapping track of cards, side
+ * by side on wide screens, swipe/arrow-through on narrow ones.
+ */
+function duelOverlay() {
+  let overlay = $("duel-overlay");
+  if (overlay) return overlay;
+
   const host = $("rps-host");
+  overlay = document.createElement("div");
+  overlay.id = "duel-overlay";
+  overlay.className = "modal-backdrop duel-overlay hidden";
+  overlay.innerHTML = `
+    <div class="duel-carousel">
+      <button type="button" class="duel-nav prev hidden" aria-label="Previous duel">‹</button>
+      <div class="duel-track" data-el="track"></div>
+      <button type="button" class="duel-nav next hidden" aria-label="Next duel">›</button>
+    </div>
+    <p class="duel-counter hidden" data-el="counter"></p>`;
+  host.appendChild(overlay);
+
+  const track = overlay.querySelector('[data-el="track"]');
+  overlay.querySelector(".prev").addEventListener("click", () => scrollDuelTrack(track, -1));
+  overlay.querySelector(".next").addEventListener("click", () => scrollDuelTrack(track, 1));
+  track.addEventListener("scroll", () => updateDuelCounter(overlay), { passive: true });
+  return overlay;
+}
+
+function scrollDuelTrack(track, dir) {
+  const width = track.firstElementChild ? track.firstElementChild.getBoundingClientRect().width + 14 : track.clientWidth;
+  track.scrollBy({ left: dir * width, behavior: "smooth" });
+}
+
+function updateDuelCounter(overlay) {
+  const track = overlay.querySelector('[data-el="track"]');
+  const counterEl = overlay.querySelector('[data-el="counter"]');
+  const navEls = overlay.querySelectorAll(".duel-nav");
+  const cards = [...track.children];
+
+  navEls.forEach((btn) => btn.classList.toggle("hidden", cards.length <= 1));
+  if (cards.length <= 1) {
+    counterEl.classList.add("hidden");
+    return;
+  }
+
+  const trackMid = track.getBoundingClientRect().left + track.clientWidth / 2;
+  let idx = 0;
+  let best = Infinity;
+  cards.forEach((c, i) => {
+    const r = c.getBoundingClientRect();
+    const dist = Math.abs(r.left + r.width / 2 - trackMid);
+    if (dist < best) {
+      best = dist;
+      idx = i;
+    }
+  });
+  counterEl.classList.remove("hidden");
+  counterEl.textContent = `Duel ${idx + 1} of ${cards.length}`;
+}
+
+function renderDuelModal() {
+  const overlay = duelOverlay();
+  const track = overlay.querySelector('[data-el="track"]');
   const entries = allActiveDuels();
 
-  // Remove modals for duels that are no longer active.
+  overlay.classList.toggle("hidden", entries.length === 0);
+
+  // Remove cards for duels that are no longer active.
   const activeKeys = new Set(entries.map((e) => `duel-${e.g.code}-${e.duel.id}`));
-  for (const el of [...host.children]) {
+  for (const el of [...track.children]) {
     if (!activeKeys.has(el.id)) el.remove();
   }
+
+  const newlyOpened = [];
 
   for (const entry of entries) {
     const { g, duel: d } = entry;
@@ -1973,34 +2095,35 @@ function renderDuelModal() {
     const oppPick = (d.picks || {})[oppId];
     const oppName = g.players?.[oppId]?.name || "They";
 
-    let modal = $(key);
-    if (!modal) {
-      modal = document.createElement("div");
-      modal.className = "modal-backdrop";
-      modal.id = key;
-      modal.innerHTML = `
-        <div class="modal" role="dialog" aria-modal="true">
-          <h2>⚔️ Contested claim</h2>
-          <p class="duel-game" data-el="game"></p>
-          <p class="duel-minigame" data-el="minigame"></p>
-          <p class="modal-sub" data-el="sub"></p>
-          <div class="pot" data-el="pot"></div>
-          <div class="duel-picker" data-el="picker"></div>
-          <p class="modal-status" data-el="status"></p>
-          <p class="modal-timeout hidden" data-el="countdown"></p>
-          <div class="rps-result hidden" data-el="result"></div>
-          <div class="modal-actions">
-            <div class="spacer"></div>
-            <button type="button" class="btn btn-ghost hidden" data-el="dismiss">Close</button>
-          </div>
-          <p class="modal-lock" data-el="lock">You can't claim again until you've made your move.</p>
-        </div>`;
-      host.appendChild(modal);
+    let card = $(key);
+    if (!card) {
+      card = document.createElement("div");
+      card.className = "modal duel-card";
+      card.id = key;
+      card.setAttribute("role", "dialog");
+      card.setAttribute("aria-modal", "true");
+      card.innerHTML = `
+        <h2>⚔️ Contested claim</h2>
+        <p class="duel-game" data-el="game"></p>
+        <p class="duel-minigame" data-el="minigame"></p>
+        <p class="modal-sub" data-el="sub"></p>
+        <div class="pot" data-el="pot"></div>
+        <div class="duel-picker" data-el="picker"></div>
+        <p class="modal-status" data-el="status"></p>
+        <p class="modal-timeout hidden" data-el="countdown"></p>
+        <div class="rps-result hidden" data-el="result"></div>
+        <div class="modal-actions">
+          <div class="spacer"></div>
+          <button type="button" class="btn btn-ghost hidden" data-el="dismiss">Close</button>
+        </div>
+        <p class="modal-lock" data-el="lock">You can't claim again until you've made your move.</p>`;
+      track.appendChild(card);
+      newlyOpened.push(card);
 
       // Wire the picker once and read live duel state at click time — the
       // markup inside gets rebuilt on every render, but delegation means the
       // listener itself never needs rewiring.
-      const pickerEl = modal.querySelector('[data-el="picker"]');
+      const pickerEl = card.querySelector('[data-el="picker"]');
       const submitPick = async (value) => {
         const cur = games.get(g.code);
         const curDuel = cur?.state?.duel;
@@ -2011,7 +2134,7 @@ function renderDuelModal() {
       };
       // Exposed so the golf mount (outside this closure, in the main render
       // loop) can submit the shot's distance the same way a button pick does.
-      modal._submitPick = submitPick;
+      card._submitPick = submitPick;
       pickerEl.addEventListener("click", (e) => {
         const doubleBtn = e.target.closest("[data-double]");
         if (doubleBtn) {
@@ -2044,17 +2167,25 @@ function renderDuelModal() {
         pickerEl.querySelector('[data-pick-btn="closest"]')?.click();
       });
 
+      // Any sign of life in the picker — a tap, a typed digit, a golf drag,
+      // focusing the number field — pushes the timeout back out.
+      const ping = () => pingDuelActivity(g.code, d.id);
+      pickerEl.addEventListener("pointerdown", ping);
+      pickerEl.addEventListener("input", ping);
+      pickerEl.addEventListener("focusin", ping);
+
       // Wire dismiss button.
-      modal.querySelector('[data-el="dismiss"]').addEventListener("click", () => {
+      card.querySelector('[data-el="dismiss"]').addEventListener("click", () => {
         const cur = games.get(g.code);
         const curDuel = cur?.state?.duel;
         if (curDuel?.status === "resolved") dismissedResults.add(curDuel.id);
-        modal.remove();
+        card.remove();
+        updateDuelCounter(overlay);
         render();
       });
     }
 
-    const el = (name) => modal.querySelector(`[data-el="${name}"]`);
+    const el = (name) => card.querySelector(`[data-el="${name}"]`);
     const meId = myId(g);
     const iPicked = myPick !== undefined && myPick !== null;
     const theyPicked = oppPick !== undefined && oppPick !== null;
@@ -2067,20 +2198,26 @@ function renderDuelModal() {
       : `<strong>${esc(oppName)}</strong> and you claimed within ` +
         `${(d.gapMs / 1000).toFixed(1)}s of each other. ${esc(meta.rule)}`;
 
-    el("pot").innerHTML = `<div class="pot-label">In escrow${d.round > 1 ? ` · round ${d.round}` : ""}</div>
-      <div class="pot-value">${fmtDuration(d.potSeconds)}</div>`;
+    const potMultiplier = d.payoutMultiplier || 1;
+    const potLabel = resolved
+      ? d.doubled && !d.doubleLost
+        ? "Doubled!"
+        : "Settled"
+      : `In escrow${d.round > 1 ? ` · round ${d.round}` : ""}`;
+    el("pot").innerHTML = `<div class="pot-label">${potLabel}</div>
+      <div class="pot-value">${fmtDuration(d.potSeconds * potMultiplier)}</div>`;
 
     // Picker (also hosts the coin's double-or-nothing choice, once decided)
     const pickerEl = el("picker");
     pickerEl.classList.toggle("hidden", resolved);
     if (!resolved) {
-      const sig = `${d.status}|${d.game}|${iPicked}|${d.game === "reaction" ? db.now() >= d.goAt : ""}`;
+      const sig = `${d.status}|${d.game}|${d.round}|${iPicked}|${d.game === "reaction" ? db.now() >= d.goAt : ""}`;
       if (pickerEl.dataset.sig !== sig) {
         pickerEl.dataset.sig = sig;
         pickerEl.innerHTML = pickerHtml(d, iPicked, meId);
         if (d.game === "golf" && d.status === "open" && !iPicked) {
           const mount = pickerEl.querySelector(".golf-mount");
-          if (mount) mountGolf(mount, d.id, (distance) => modal._submitPick(distance));
+          if (mount) mountGolf(mount, d.id, d.round || 1, (distance) => card._submitPick(distance));
         }
       }
     }
@@ -2096,53 +2233,90 @@ function renderDuelModal() {
       const iWon = d.winner === meId;
       statusEl.textContent = "";
       resultEl.classList.remove("hidden");
-      const doubleNote = d.doubled
-        ? d.doubleLost
-          ? `<div class="rr-detail">Double-or-nothing gone wrong — the win flipped sides on the extra flip.</div>`
-          : `<div class="rr-detail">Doubled it! 🔥</div>`
-        : "";
-      const timeoutNote = d.timedOut
-        ? `<div class="rr-detail">${esc(iWon ? "You" : oppName)} made a move before time ran out — ${
-            iWon ? "the win goes to you." : "they get it."
-          }</div>`
-        : "";
-      resultEl.innerHTML = `
-        <div class="rr-throws">${resultDetailHtml(d, meId, oppId, oppName)}</div>
-        <div class="rr-verdict ${iWon ? "won" : "lost"}">${iWon ? "You take it" : "You lose it"}</div>
-        <div class="rr-detail">${
-          iWon
-            ? `${fmtDuration(d.potSeconds * (d.payoutMultiplier || 1))} banked. ${esc(oppName)} gets nothing.`
-            : `${esc(oppName)} takes ${fmtDuration(d.potSeconds * (d.payoutMultiplier || 1))}.`
-        }</div>
-        ${timeoutNote}
-        ${doubleNote}`;
+
+      // Rebuild (and re-trigger the coin's flip animation) only the moment
+      // this particular resolution appears — not on every 200ms tick while
+      // the result stays on screen waiting to be dismissed.
+      const resultSig = `${d.id}|${d.status}|${d.doubled}|${d.doubleLost}|${d.timedOut}`;
+      if (resultEl.dataset.sig !== resultSig) {
+        resultEl.dataset.sig = resultSig;
+
+        const doubleNote = d.doubled
+          ? d.doubleLost
+            ? `<div class="rr-detail">Double-or-nothing gone wrong — the win flipped sides on the extra flip.</div>`
+            : `<div class="rr-detail">Doubled it! 🔥</div>`
+          : "";
+        const timeoutNote = d.timedOut
+          ? `<div class="rr-detail">${esc(iWon ? "You" : oppName)} made a move before time ran out — ${
+              iWon ? "the win goes to you." : "they get it."
+            }</div>`
+          : "";
+        const coinResult = d.game === "coin" ? d.detail?.result : null;
+        const coinFlipHtml = coinResult
+          ? `<div class="coin-flip-stage">
+              <div class="coin-face spin">🪙</div>
+            </div>
+            <div class="coin-outcome ${coinResult}">${coinResult === "heads" ? "Heads" : "Tails"}</div>`
+          : "";
+
+        resultEl.innerHTML = `
+          ${coinFlipHtml}
+          <div class="rr-throws">${resultDetailHtml(d, meId, oppId, oppName)}</div>
+          <div class="rr-verdict ${iWon ? "won" : "lost"}">${iWon ? "You take it" : "You lose it"}</div>
+          <div class="rr-detail">${
+            iWon
+              ? `${fmtDuration(d.potSeconds * (d.payoutMultiplier || 1))} banked. ${esc(oppName)} gets nothing.`
+              : `${esc(oppName)} takes ${fmtDuration(d.potSeconds * (d.payoutMultiplier || 1))}.`
+          }</div>
+          ${timeoutNote}
+          ${doubleNote}`;
+      }
+
       dismissEl.classList.remove("hidden");
       lockEl.classList.add("hidden");
       countdownEl.classList.add("hidden");
     } else {
-      resultEl.classList.add("hidden");
       dismissEl.classList.add("hidden");
       lockEl.classList.remove("hidden"); // still locked either way — waiting on a pick or a double-or-nothing choice
 
       if (d.status === "double_offer") {
+        // The flip already happened — show it, same visual as the final result.
+        resultEl.classList.remove("hidden");
+        const resultSig = `${d.id}|${d.status}`;
+        if (resultEl.dataset.sig !== resultSig) {
+          resultEl.dataset.sig = resultSig;
+          const coinResult = d.detail?.result;
+          resultEl.innerHTML = coinResult
+            ? `<div class="coin-flip-stage"><div class="coin-face spin">🪙</div></div>
+               <div class="coin-outcome ${coinResult}">${coinResult === "heads" ? "Heads" : "Tails"}</div>`
+            : "";
+        }
         statusEl.textContent =
           d.winner === meId
             ? "You called it. Bank it, or push your luck?"
             : `${oppName} called it right — deciding whether to take it or go double or nothing.`;
       } else if (!iPicked) {
+        resultEl.classList.add("hidden");
         statusEl.textContent = theyPicked ? `${oppName} has moved. Your turn.` : "Make your move.";
       } else {
+        resultEl.classList.add("hidden");
         statusEl.textContent = `Locked in. Waiting for ${oppName}…`;
       }
 
-      const startedAt = d.status === "double_offer" ? d.decidedAt : d.roundStartAt || d.createdAt;
+      const startedAt = Math.max(
+        (d.status === "double_offer" ? d.decidedAt : d.roundStartAt || d.createdAt) || 0,
+        d.lastActivityAt || 0
+      );
       const remaining = startedAt ? DUEL_TIMEOUT_MS - (db.now() - startedAt) : DUEL_TIMEOUT_MS;
       countdownEl.classList.remove("hidden");
       countdownEl.textContent =
-        remaining > 0
-          ? `Auto-resolves in ${fmtDurationShort(Math.ceil(remaining / 1000))} if unanswered.`
-          : "Resolving…";
+        remaining > 0 ? `Auto-resolves in ${fmtCountdown(remaining)} if unanswered.` : "Resolving…";
     }
+  }
+
+  updateDuelCounter(overlay);
+  if (newlyOpened.length) {
+    newlyOpened[newlyOpened.length - 1].scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
   }
 }
 
