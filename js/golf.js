@@ -94,7 +94,8 @@ function placeObstacles(seed, round, tee, hole) {
  * @param container element to mount the canvas + controls into
  * @param seed      shared seed (the duel id) so both players get the same course
  * @param round     current duel round — round 2+ adds one more obstacle each time
- * @param onDone    (distance:number) => void — fires once, distance 0 means sunk
+ * @param onDone    (distance:number, path:{x,y}[]) => void — fires once, distance 0 means
+ *                  sunk; path is every frame of the shot, for replaying it later
  * @returns {destroy()} to unhook listeners if the modal goes away mid-shot
  */
 export function mountGolf(container, seed, round, onDone) {
@@ -115,12 +116,8 @@ export function mountGolf(container, seed, round, onDone) {
   actions.className = "golf-actions hidden";
   actions.innerHTML = `
     <button type="button" class="btn btn-ghost" data-golf="reaim">Re-aim</button>
-    <button type="button" class="btn btn-primary" data-golf="putt">Putt</button>
-    <button type="button" class="btn btn-ghost hidden" data-golf="replay">Watch replay</button>`;
+    <button type="button" class="btn btn-primary" data-golf="putt">Putt</button>`;
   container.appendChild(actions);
-  const replayBtn = actions.querySelector('[data-golf="replay"]');
-  const reaimBtn = actions.querySelector('[data-golf="reaim"]');
-  const puttBtn = actions.querySelector('[data-golf="putt"]');
 
   const ctx = canvas.getContext("2d");
   const ball = { x: tee.x, y: tee.y };
@@ -131,9 +128,7 @@ export function mountGolf(container, seed, round, onDone) {
   let done = false;
   let frame = 0;
   let raf = null;
-  const path = [{ x: ball.x, y: ball.y }]; // every frame of the shot, for the post-shot replay
-  let replayRaf = null;
-  let finalHint = ""; // restored after a replay finishes
+  const path = [{ x: ball.x, y: ball.y }]; // every frame of the shot — handed back via onDone so it can be replayed later
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
@@ -227,10 +222,6 @@ export function mountGolf(container, seed, round, onDone) {
       draw();
       return;
     }
-    if (btn.dataset.golf === "replay") {
-      playReplay();
-      return;
-    }
     // Putt: hand the confirmed velocity to the physics sim.
     vel = pending;
     pending = null;
@@ -239,37 +230,6 @@ export function mountGolf(container, seed, round, onDone) {
     raf = requestAnimationFrame(tick);
   }
   actions.addEventListener("click", onAction);
-
-  // Steps back through the recorded shot path so a finished shot can be
-  // watched again — same ball/hole/obstacles, just replaying the motion.
-  // Only the local player's own shot is available to replay for now; a
-  // future version could carry the opponent's recorded path over the wire
-  // the same way and reuse this exact playback.
-  function playReplay() {
-    if (replayRaf) return; // already playing
-    replayBtn.disabled = true;
-    let i = 0;
-    const savedX = ball.x;
-    const savedY = ball.y;
-    hint.textContent = "Replaying your shot…";
-    function step() {
-      if (i >= path.length) {
-        ball.x = savedX;
-        ball.y = savedY;
-        draw();
-        hint.textContent = finalHint;
-        replayBtn.disabled = false;
-        replayRaf = null;
-        return;
-      }
-      ball.x = path[i].x;
-      ball.y = path[i].y;
-      draw();
-      i++;
-      replayRaf = requestAnimationFrame(step);
-    }
-    replayRaf = requestAnimationFrame(step);
-  }
 
   function tick() {
     if (done) return;
@@ -327,13 +287,8 @@ export function mountGolf(container, seed, round, onDone) {
     if (sunk || speed < STOP_SPEED || frame > MAX_FRAMES) {
       done = true;
       const finalDist = sunk ? 0 : distToHole;
-      finalHint = sunk ? "🏌️ Sunk it!" : `${Math.round(finalDist)} from the hole.`;
-      hint.textContent = finalHint;
-      reaimBtn.classList.add("hidden");
-      puttBtn.classList.add("hidden");
-      replayBtn.classList.remove("hidden");
-      actions.classList.remove("hidden");
-      onDone(finalDist);
+      hint.textContent = sunk ? "🏌️ Sunk it!" : `${Math.round(finalDist)} from the hole.`;
+      onDone(finalDist, path);
       return;
     }
     raf = requestAnimationFrame(tick);
@@ -344,11 +299,98 @@ export function mountGolf(container, seed, round, onDone) {
   return {
     destroy() {
       if (raf) cancelAnimationFrame(raf);
-      if (replayRaf) cancelAnimationFrame(replayRaf);
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointercancel", onUp);
+      actions.removeEventListener("click", onAction);
+    },
+  };
+}
+
+/**
+ * Replays a previously recorded shot (the `path` handed back from `onDone`)
+ * on the same course it was played on. Only the local player's own path is
+ * ever recorded today — there's no wire format yet for sharing an opponent's
+ * shot — so this is what a "watch their replay" button falls back to until
+ * that's built.
+ *
+ * @param container element to mount the canvas + replay button into
+ * @param seed      same duel id used for the original shot, so the course matches
+ * @param round     same round the shot was played in
+ * @param path      the recorded {x,y}[] from that shot's onDone callback
+ * @returns {destroy()} to unhook listeners if the modal goes away mid-replay
+ */
+export function mountGolfReplay(container, seed, round, path) {
+  const { tee, hole } = pickLayout(seed);
+  const obstacles = placeObstacles(seed, round || 1, tee, hole);
+
+  container.innerHTML = "";
+  const canvas = document.createElement("canvas");
+  canvas.width = W;
+  canvas.height = H;
+  canvas.className = "golf-canvas";
+  container.appendChild(canvas);
+  const actions = document.createElement("div");
+  actions.className = "golf-actions";
+  actions.innerHTML = `<button type="button" class="btn btn-ghost" data-golf="replay">Watch replay</button>`;
+  container.appendChild(actions);
+  const replayBtn = actions.querySelector('[data-golf="replay"]');
+
+  const ctx = canvas.getContext("2d");
+  const ball = { x: (path[0] || tee).x, y: (path[0] || tee).y };
+  let raf = null;
+
+  function draw() {
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = "#1b3a2a";
+    ctx.fillRect(0, 0, W, H);
+    ctx.beginPath();
+    ctx.fillStyle = "#06100a";
+    ctx.arc(hole.x, hole.y, HOLE_R, 0, Math.PI * 2);
+    ctx.fill();
+    for (const o of obstacles) {
+      ctx.beginPath();
+      ctx.fillStyle = "#5b6675";
+      ctx.arc(o.x, o.y, OBSTACLE_R, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.beginPath();
+    ctx.fillStyle = "#fff";
+    ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function play() {
+    if (raf || !path || !path.length) return;
+    replayBtn.disabled = true;
+    let i = 0;
+    function step() {
+      if (i >= path.length) {
+        replayBtn.disabled = false;
+        raf = null;
+        return;
+      }
+      ball.x = path[i].x;
+      ball.y = path[i].y;
+      draw();
+      i++;
+      raf = requestAnimationFrame(step);
+    }
+    raf = requestAnimationFrame(step);
+  }
+
+  function onAction(e) {
+    if (e.target.closest('[data-golf="replay"]')) play();
+  }
+  actions.addEventListener("click", onAction);
+
+  draw();
+  play();
+
+  return {
+    destroy() {
+      if (raf) cancelAnimationFrame(raf);
       actions.removeEventListener("click", onAction);
     },
   };

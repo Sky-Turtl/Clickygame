@@ -34,7 +34,7 @@ import {
 import { BUCKETS, bucketOHLC, claimRows, groupRuns, sortRows, suggestBucket } from "./series.js";
 import { barChart, candleChart, leadArea, legend } from "./charts.js";
 import { buildExport, countdownToClaims, parseImport } from "./importer.js";
-import { mountGolf } from "./golf.js";
+import { mountGolf, mountGolfReplay } from "./golf.js";
 import { setForcedGame } from "./engine.js";
 
 const $ = (id) => document.getElementById(id);
@@ -1987,6 +1987,10 @@ function wireHub() {
 // --- Duel modals (one per active duel) --------------------------------------
 
 const dismissedResults = new Set();
+// duel id -> the recorded path of my own golf shot, kept client-side just so
+// the result screen's "Watch replay" has something to play back. There's no
+// wire format yet for the opponent's actual shot, so this stands in for it.
+const golfShotPaths = new Map();
 
 /** All duels I'm involved in that should have a visible modal. */
 function allActiveDuels() {
@@ -2183,6 +2187,7 @@ function renderDuelModal() {
         const cur = games.get(g.code);
         const curDuel = cur?.state?.duel;
         if (curDuel?.status === "resolved") dismissedResults.add(curDuel.id);
+        golfShotPaths.delete(curDuel?.id);
         card.remove();
         updateDuelCounter(overlay);
         render();
@@ -2221,7 +2226,11 @@ function renderDuelModal() {
         pickerEl.innerHTML = pickerHtml(d, iPicked, meId);
         if (d.game === "golf" && d.status === "open" && !iPicked) {
           const mount = pickerEl.querySelector(".golf-mount");
-          if (mount) mountGolf(mount, d.id, d.round || 1, (distance) => card._submitPick(distance));
+          if (mount)
+            mountGolf(mount, d.id, d.round || 1, (distance, path) => {
+              golfShotPaths.set(d.id, path);
+              card._submitPick(distance);
+            });
         }
       }
     }
@@ -2256,6 +2265,10 @@ function renderDuelModal() {
             }</div>`
           : "";
         const coinResult = d.game === "coin" ? d.detail?.result : null;
+        const golfPath = d.game === "golf" ? golfShotPaths.get(d.id) : null;
+        const golfReplayHtml = golfPath
+          ? `<div class="golf-replay" data-el="golf-replay"></div>`
+          : "";
         const restHtml = `
           <div class="rr-throws">${resultDetailHtml(d, meId, oppId, oppName)}</div>
           <div class="rr-verdict ${iWon ? "won" : "lost"}">${iWon ? "You take it" : "You lose it"}</div>
@@ -2265,12 +2278,20 @@ function renderDuelModal() {
               : `${esc(oppName)} takes ${fmtDuration(d.potSeconds * (d.payoutMultiplier || 1))}.`
           }</div>
           ${timeoutNote}
-          ${doubleNote}`;
+          ${doubleNote}
+          ${golfReplayHtml}`;
 
         if (coinResult) {
           playCoinFlip(resultEl, coinResult, restHtml);
         } else {
           resultEl.innerHTML = restHtml;
+        }
+
+        if (golfPath) {
+          const mount = resultEl.querySelector('[data-el="golf-replay"]');
+          // Not the opponent's actual shot — there's no syncing for that yet
+          // — but it plays back on the same course, standing in until then.
+          if (mount) mountGolfReplay(mount, d.id, d.round || 1, golfPath);
         }
       }
 
