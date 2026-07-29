@@ -23,6 +23,29 @@ export const firebaseConfig = {
   appId: "1:910470214643:web:ba420e8ceb57595cf49886"
 };
 
+// ---------------------------------------------------------------------------
+// APP CHECK (optional, but strongly recommended)
+//
+// Firebase configs (above) are never secret — they're meant to ship to every
+// visitor's browser. What actually stops a stranger from grabbing that config
+// and writing their own script against your database is App Check: it makes
+// every request carry a token proving it came from a real load of *this*
+// site, not just anything that knows the config.
+//
+// 1. Firebase console -> Build -> App Check -> Apps -> your web app ->
+//    Register -> reCAPTCHA v3 -> it gives you a site key from
+//    https://www.google.com/recaptcha/admin (created for you automatically).
+// 2. Paste that site key below.
+// 3. Once you've confirmed real traffic is getting valid tokens (App Check
+//    dashboard shows verified requests), flip "Enforce" on for Realtime
+//    Database in the App Check console. Leave it un-enforced while testing —
+//    enforcing before the site key is live here would lock everyone out,
+//    including you.
+//
+// Leave this blank to skip App Check (the site still works, just without
+// this protection).
+export const RECAPTCHA_SITE_KEY = "";
+
 
 // --- Game tuning ------------------------------------------------------------
 

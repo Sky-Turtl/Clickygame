@@ -156,10 +156,20 @@ In **Realtime Database → Rules**, paste this and hit **Publish**:
           }
         }
       }
+    },
+    "accounts": {
+      "$uid": {
+        ".read": "auth != null && auth.uid === $uid",
+        ".write": "auth != null && auth.uid === $uid"
+      }
     }
   }
 }
 ```
+
+The `accounts` block is only needed if you're using the optional username/password
+accounts feature (cross-device game sync + the profile page) — it keeps each
+account's data readable and writable only by that signed-in account.
 
 **What this does and doesn't do.** Anyone who knows a game code can read and
 write that game. Nobody can list or discover games — you can only reach one by
@@ -172,7 +182,34 @@ directly to the database. If that matters to you, the honest fix is a real
 server, not stricter rules — a browser-side game where both players can write is
 always ultimately trust-based.
 
-### 4. Publish to GitHub Pages
+### 4. (Optional) Lock the database to your own site with App Check
+
+The rules above let *anyone who knows a game code* read and write it — that's
+by design, it's how your opponent's browser talks to the game with zero setup
+on their end. But it also means anyone who copies your `firebaseConfig` (which
+is never secret — see the note above) could point their *own* script at your
+project, not just play through your actual site.
+
+[Firebase App Check](https://firebase.google.com/docs/app-check) closes that
+gap: it makes every request carry a token proving it came from a real load of
+*your* site, and lets you reject anything that doesn't have one.
+
+1. Firebase console → **Build → App Check → Apps** → your web app → **Register**.
+2. Pick **reCAPTCHA v3** as the provider. Firebase creates a
+   [reCAPTCHA](https://www.google.com/recaptcha/admin) site key for you —
+   copy it.
+3. Paste it into `RECAPTCHA_SITE_KEY` in [`js/config.js`](js/config.js) and
+   deploy.
+4. Play the game a few times so real traffic shows up in the App Check
+   dashboard as verified.
+5. Only then, in **App Check → APIs**, turn **Enforce** on for **Realtime
+   Database**. Enforcing before step 4 locks *everyone* out, including you —
+   there'd be no verified traffic yet to prove the token flow works.
+
+Leave `RECAPTCHA_SITE_KEY` blank to skip this — the game works fine without
+it, just without this particular protection.
+
+### 5. Publish to GitHub Pages
 
 ```bash
 git init

@@ -40,8 +40,12 @@ import {
   onAuthStateChanged,
   updateProfile,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+import {
+  initializeAppCheck,
+  ReCaptchaV3Provider,
+} from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app-check.js";
 
-import { firebaseConfig, MIN_CLAIM_INTERVAL_MS, TIE_WINDOW_MS } from "./config.js";
+import { firebaseConfig, MIN_CLAIM_INTERVAL_MS, RECAPTCHA_SITE_KEY, TIE_WINDOW_MS } from "./config.js";
 import { multiplierAt } from "./rules.js";
 import { applyClaim, applyDoubleChoice, applySettle, applyThrow } from "./engine.js";
 
@@ -52,6 +56,17 @@ let serverOffset = 0;
 /** Connect. Anonymous auth is attempted but not required. */
 export async function init() {
   const app = initializeApp(firebaseConfig);
+
+  // Proves requests come from a real load of this site, not just anything
+  // that copied the (never-secret) config above. Skipped entirely if no site
+  // key is set — see config.js for the console steps to get one.
+  if (RECAPTCHA_SITE_KEY) {
+    initializeAppCheck(app, {
+      provider: new ReCaptchaV3Provider(RECAPTCHA_SITE_KEY),
+      isTokenAutoRefreshEnabled: true,
+    });
+  }
+
   db = getDatabase(app);
   auth = getAuth(app);
 
