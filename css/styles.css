@@ -852,15 +852,20 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-
 
 .coin-flip-stage { perspective: 600px; display: flex; justify-content: center; margin: 4px 0 2px; }
 .coin-face { font-size: 46px; line-height: 1; display: inline-block; }
-.coin-face.spin { animation: coin-spin 0.9s cubic-bezier(.22,.61,.36,1) 1; }
-@keyframes coin-spin {
-  0% { transform: rotateY(0deg) scale(1); }
-  55% { transform: rotateY(1080deg) scale(1.2); }
-  100% { transform: rotateY(1440deg) scale(1); }
+.coin-face.spin-loop { animation: coin-spin-loop 0.45s linear infinite; }
+@keyframes coin-spin-loop {
+  0% { transform: rotateY(0deg); }
+  100% { transform: rotateY(360deg); }
+}
+.coin-face.settle { animation: coin-settle 0.4s cubic-bezier(.22,.61,.36,1) 1; }
+@keyframes coin-settle {
+  0% { transform: rotateY(0deg) scale(1.25); }
+  100% { transform: rotateY(0deg) scale(1); }
 }
 .coin-outcome { text-align: center; font-weight: 700; font-size: 15px; letter-spacing: .06em; text-transform: uppercase; margin: 2px 0 10px; }
 .coin-outcome.heads { color: var(--gold); }
 .coin-outcome.tails { color: var(--text-dim); }
+.coin-outcome.flipping { opacity: .55; }
 
 .rps-result { text-align: center; margin-top: 16px; }
 .rps-result .rr-throws { font-size: 20px; line-height: 1.4; }
