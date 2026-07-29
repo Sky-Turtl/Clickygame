@@ -21,6 +21,7 @@ const MAX_PULL = 80;
 const SHOT_SPEED = 6.5;
 const FRICTION = 0.985;
 const STOP_SPEED = 0.06;
+const WALL_BOUNCE = 0.65; // energy kept off the side rails, so it damps out rather than bouncing forever
 const MAX_FRAMES = 900; // ~15s safety cap so a stuck ball can't hang the modal forever
 
 /** Deterministic [0,1) — a tiny local hash, not worth importing util.js's for one cosmetic offset. */
@@ -34,7 +35,7 @@ function seededRand(seedStr) {
 }
 
 /**
- * @param container element to mount the canvas + hint text into
+ * @param container element to mount the canvas + controls into
  * @param seed      shared seed (the duel id) so both players get the same course
  * @param onDone    (distance:number) => void — fires once, distance 0 means sunk
  * @returns {destroy()} to unhook listeners if the modal goes away mid-shot
@@ -52,12 +53,19 @@ export function mountGolf(container, seed, onDone) {
   container.appendChild(canvas);
   const hint = document.createElement("div");
   hint.className = "golf-hint";
-  hint.textContent = "Drag back from the ball, then let go to putt.";
+  hint.textContent = "Drag back from the ball, then let go to aim.";
   container.appendChild(hint);
+  const actions = document.createElement("div");
+  actions.className = "golf-actions hidden";
+  actions.innerHTML = `
+    <button type="button" class="btn btn-ghost" data-golf="reaim">Re-aim</button>
+    <button type="button" class="btn btn-primary" data-golf="putt">Putt</button>`;
+  container.appendChild(actions);
 
   const ctx = canvas.getContext("2d");
   const ball = { x: TEE.x, y: TEE.y };
   let vel = null; // {x,y} once the shot is in flight
+  let pending = null; // {x,y} confirmed shot velocity, waiting on the Putt button
   let dragging = false;
   let dragTo = null;
   let done = false;
@@ -72,7 +80,7 @@ export function mountGolf(container, seed, onDone) {
     ctx.fillStyle = "#06100a";
     ctx.arc(hole.x, hole.y, HOLE_R, 0, Math.PI * 2);
     ctx.fill();
-    if (dragging && dragTo) {
+    if ((dragging || pending) && dragTo) {
       ctx.strokeStyle = "rgba(255,255,255,.55)";
       ctx.lineWidth = 2;
       ctx.beginPath();
@@ -104,7 +112,7 @@ export function mountGolf(container, seed, onDone) {
   }
 
   function onDown(e) {
-    if (vel || done) return;
+    if (vel || pending || done) return;
     dragging = true;
     dragTo = clampPull(pointFromEvent(e));
     canvas.setPointerCapture?.(e.pointerId);
@@ -121,20 +129,43 @@ export function mountGolf(container, seed, onDone) {
     const dx = ball.x - dragTo.x; // launches AWAY from the pull, like a slingshot
     const dy = ball.y - dragTo.y;
     const power = Math.hypot(dx, dy) / MAX_PULL;
-    dragTo = null;
     if (power < 0.05) {
+      dragTo = null;
       draw();
-      return; // too soft to count as a shot — try again
+      return; // too soft to count as an aim — try again
     }
-    vel = { x: (dx / MAX_PULL) * SHOT_SPEED, y: (dy / MAX_PULL) * SHOT_SPEED };
-    hint.textContent = "…";
-    raf = requestAnimationFrame(tick);
+    // Hold the aim as a pending shot instead of firing immediately — the
+    // player confirms with the Putt button (or scraps it with Re-aim).
+    pending = { x: (dx / MAX_PULL) * SHOT_SPEED, y: (dy / MAX_PULL) * SHOT_SPEED };
+    hint.textContent = "Putt when ready, or re-aim.";
+    actions.classList.remove("hidden");
+    draw();
   }
 
   canvas.addEventListener("pointerdown", onDown);
   canvas.addEventListener("pointermove", onMove);
   canvas.addEventListener("pointerup", onUp);
   canvas.addEventListener("pointercancel", onUp);
+
+  function onAction(e) {
+    const btn = e.target.closest("[data-golf]");
+    if (!btn) return;
+    if (btn.dataset.golf === "reaim") {
+      pending = null;
+      dragTo = null;
+      actions.classList.add("hidden");
+      hint.textContent = "Drag back from the ball, then let go to aim.";
+      draw();
+      return;
+    }
+    // Putt: hand the confirmed velocity to the physics sim.
+    vel = pending;
+    pending = null;
+    actions.classList.add("hidden");
+    hint.textContent = "…";
+    raf = requestAnimationFrame(tick);
+  }
+  actions.addEventListener("click", onAction);
 
   function tick() {
     if (done) return;
@@ -145,7 +176,17 @@ export function mountGolf(container, seed, onDone) {
     vel.x *= FRICTION;
     vel.y *= FRICTION;
 
-    const outOfBounds = ball.x < -20 || ball.x > W + 20 || ball.y < -20 || ball.y > H + 20;
+    // The side rails bounce the ball back onto the green instead of losing
+    // it — only the near/far ends (past the tee, past the hole) end the shot.
+    if (ball.x < BALL_R) {
+      ball.x = BALL_R;
+      vel.x = Math.abs(vel.x) * WALL_BOUNCE;
+    } else if (ball.x > W - BALL_R) {
+      ball.x = W - BALL_R;
+      vel.x = -Math.abs(vel.x) * WALL_BOUNCE;
+    }
+
+    const outOfBounds = ball.y < -20 || ball.y > H + 20;
     const speed = Math.hypot(vel.x, vel.y);
     const distToHole = Math.hypot(ball.x - hole.x, ball.y - hole.y);
     const sunk = distToHole < SINK_R && speed < 1.2;
@@ -171,6 +212,7 @@ export function mountGolf(container, seed, onDone) {
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
       canvas.removeEventListener("pointercancel", onUp);
+      actions.removeEventListener("click", onAction);
     },
   };
 }
