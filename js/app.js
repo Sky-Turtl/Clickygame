@@ -11,8 +11,10 @@ import {
   PERIODS,
   THROW_EMOJI,
   doubleHoursFor,
+  maxClaimable,
   multiplierAt,
   summarize,
+  unwinnableAt,
   windowStatus,
 } from "./rules.js";
 import {
@@ -473,6 +475,38 @@ function onClock(g) {
   return Math.max(0, (end - g.state.lastClaimAt) / 1000);
 }
 
+/**
+ * How much real time is left before the current lead in `g` becomes
+ * mathematically unwinnable — i.e. the trailing player could no longer close
+ * the gap even by claiming every remaining second on the clock.
+ *
+ * @returns null when there's no opponent/game-over/dead tie, otherwise
+ *   { forMe: boolean, leftMs: number, final: boolean }
+ *   `forMe` is true when I'm the one who needs to catch up; `final` means the
+ *   deficit is already unwinnable right now (leftMs is 0).
+ */
+function catchUpWindow(g) {
+  if (isOver(g)) return null;
+  const opp = opponentOf(g);
+  if (!opp) return null;
+
+  const { rows } = totalsFor(g);
+  const mine = rows[myId(g)]?.all.claimed || 0;
+  const theirs = rows[opp.id]?.all.claimed || 0;
+  const lead = mine - theirs;
+  if (lead === 0) return null;
+
+  const now = db.now();
+  const end = g.meta.endsAt;
+  const budget = Math.abs(lead);
+  const max = maxClaimable(g.code, now, end);
+
+  if (max < budget) return { forMe: lead < 0, leftMs: 0, final: true };
+
+  const t = unwinnableAt(g.code, budget, now, end);
+  return { forMe: lead < 0, leftMs: Math.max(0, t - now), final: false };
+}
+
 function openDuelFor(g) {
   const d = g.state?.duel;
   if (!d || d.status !== "open") return null;
@@ -811,6 +845,23 @@ function renderGameList() {
         status = { cls: "ready", text: "Ready to claim" };
       }
 
+      const catchUp = over ? null : catchUpWindow(g);
+      let catchUpHtml = "";
+      if (catchUp) {
+        if (catchUp.final) {
+          catchUpHtml = catchUp.forMe
+            ? `<div class="gc-catchup lost">You can no longer catch up.</div>`
+            : `<div class="gc-catchup safe">${esc(opp?.name || "They")} can no longer catch up.</div>`;
+        } else if (catchUp.forMe) {
+          const urgent = catchUp.leftMs < 3600e3;
+          catchUpHtml = `<div class="gc-catchup ${urgent ? "urgent" : ""}">
+            ${fmtDuration(catchUp.leftMs / 1000)} left to catch up before it's unwinnable</div>`;
+        } else {
+          catchUpHtml = `<div class="gc-catchup safe">
+            ${esc(opp?.name || "They")} have ${fmtDuration(catchUp.leftMs / 1000)} left to catch up</div>`;
+        }
+      }
+
       return `
       <div class="game-card ${over ? "over" : ""} ${duel ? "duel" : ""}" data-code="${esc(g.code)}">
         <div class="gc-main" data-open="${esc(g.code)}">
@@ -838,6 +889,7 @@ function renderGameList() {
           <div class="gc-sub">
             ${over ? "" : `<span class="gc-clock">${fmtDuration(onClock(g))} on the clock</span> · `}${deadline}
           </div>
+          ${catchUpHtml}
         </div>
         <button class="sync-toggle ${synced ? "on" : ""}" data-sync="${esc(g.code)}"
                 title="${synced ? "Synced — clicks land here" : "Not synced"}"
@@ -961,9 +1013,11 @@ function renderHubStats() {
   const scope = sel.value || "__all__";
   const single = scope !== "__all__" ? games.get(scope) : null;
 
+  $("hub-feed-card").classList.toggle("hidden", !(single && single.meta));
   if (single && single.meta) {
     renderStatsFor([single], single, "hub-summary-table", "hub-stat-grid");
     renderCharts([single], single);
+    renderFeed("hub-feed", single, 50);
   } else {
     const all = roster.map((r) => games.get(r.code)).filter((g) => g && g.meta);
     renderStatsFor(all, null, "hub-summary-table", "hub-stat-grid");
@@ -1267,14 +1321,24 @@ function renderDetail() {
     })
     .join("");
 
-  // Feed. Consecutive claims by the same player collapse into one row carrying
-  // the combined total; the individual splits stay available behind a toggle.
+  renderFeed("feed", g, 15);
+}
+
+/**
+ * Consecutive claims by the same player collapse into one row carrying the
+ * combined total; the individual splits stay available behind a toggle.
+ *
+ * @param hostId id of the <ul> to render into
+ * @param g      game to pull claims from
+ * @param limit  most recent runs to show
+ */
+function renderFeed(hostId, g, limit) {
   const escrowedId = g.state?.duel?.status === "open" ? g.state.duel.disputedClaimId : null;
   const feedRows = claimRows(g.claims || [], myId(g));
-  const runs = groupRuns(feedRows).reverse().slice(0, 15);
+  const runs = groupRuns(feedRows).reverse().slice(0, limit);
 
   setHTML(
-    "feed",
+    hostId,
     runs.length
       ? runs
           .map((run) => {

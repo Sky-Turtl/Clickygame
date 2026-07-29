@@ -397,6 +397,11 @@ input[type=date] { color-scheme: dark; }
 .gc-status-wait { color: var(--gold); }
 .gc-status-off { color: var(--text-faint); font-weight: 500; }
 
+.gc-catchup { font-size: 12px; margin-top: 5px; color: var(--text-dim); }
+.gc-catchup.safe { color: var(--green); }
+.gc-catchup.lost { color: var(--text-faint); }
+.gc-catchup.urgent { color: var(--red); font-weight: 700; }
+
 .sync-toggle {
   flex: none;
   width: 62px;

@@ -88,6 +88,58 @@ export function rps(a, b) {
   return wins[a] === b ? 1 : -1;
 }
 
+// --- Catch-up math -----------------------------------------------------------
+
+/**
+ * Max claimed-seconds obtainable between two instants if one player claimed
+ * every second on the clock, honoring whatever 2x windows fall in between.
+ */
+export function maxClaimable(gameCode, fromMs, toMs) {
+  if (toMs <= fromMs) return 0;
+  let total = 0;
+  let cur = fromMs;
+  while (cur < toMs) {
+    const h = new Date(cur);
+    const nextHourMs = Date.UTC(h.getUTCFullYear(), h.getUTCMonth(), h.getUTCDate(), h.getUTCHours() + 1);
+    const segEnd = Math.min(nextHourMs, toMs);
+    total += ((segEnd - cur) / 1000) * multiplierAt(gameCode, cur);
+    cur = segEnd;
+  }
+  return total;
+}
+
+/**
+ * The latest instant T (fromMs <= T <= toMs) at which a trailing player could
+ * still theoretically close a gap of `budget` claimed-seconds by claiming
+ * every remaining second between T and toMs.
+ *
+ * Past this instant the deficit is mathematically unwinnable even in the best
+ * case, regardless of what either player actually does. Returns `fromMs` when
+ * even claiming the whole remaining window isn't enough (already unwinnable),
+ * or `null` when there's nothing to catch up (`budget <= 0`).
+ */
+export function unwinnableAt(gameCode, budget, fromMs, toMs) {
+  if (budget <= 0) return null;
+  if (maxClaimable(gameCode, fromMs, toMs) < budget) return fromMs;
+
+  let acc = 0;
+  let cur = toMs;
+  while (cur > fromMs) {
+    const h = new Date(cur - 1); // hour containing the instant just before cur
+    const hourStartMs = Date.UTC(h.getUTCFullYear(), h.getUTCMonth(), h.getUTCDate(), h.getUTCHours());
+    const segStart = Math.max(hourStartMs, fromMs);
+    const rate = multiplierAt(gameCode, segStart);
+    const segClaim = ((cur - segStart) / 1000) * rate;
+    if (acc + segClaim >= budget) {
+      const neededSeconds = (budget - acc) / rate;
+      return cur - neededSeconds * 1000;
+    }
+    acc += segClaim;
+    cur = segStart;
+  }
+  return fromMs;
+}
+
 // --- Summary aggregation ----------------------------------------------------
 
 export const PERIODS = [
