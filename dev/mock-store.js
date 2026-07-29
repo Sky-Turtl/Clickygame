@@ -334,7 +334,7 @@ export function watchAccountRoster(uid, cb) {
 function botPickFor(duel) {
   switch (duel.game) {
     case "closest":
-      return Math.floor(Math.random() * 101);
+      return 1 + Math.floor(Math.random() * 10);
     case "coin":
     case "dice":
       return true; // no real "choice" for these — just needs to be present

@@ -100,7 +100,7 @@ export const DUEL_META = {
   closest: {
     label: "Closest guess",
     icon: "🎯",
-    rule: "Guess a number from 0–100. Whoever's closest to the secret target wins.",
+    rule: "Guess a number from 1–10. Whoever's closest to the secret target wins.",
   },
   coin: {
     label: "Coin flip",

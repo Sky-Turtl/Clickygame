@@ -1827,7 +1827,7 @@ function renderDuelModal() {
         if (numBtn) {
           const input = pickerEl.querySelector(".duel-number-input");
           const val = Math.round(Number(input?.value));
-          if (!Number.isFinite(val) || val < 0 || val > 100) {
+          if (!Number.isFinite(val) || val < 1 || val > 10) {
             input?.classList.add("bad");
             return;
           }
@@ -1922,7 +1922,7 @@ function pickerHtml(d, iPicked) {
   switch (d.game) {
     case "closest":
       return `<div class="duel-number">
-        <input type="number" min="0" max="100" step="1" class="duel-number-input" placeholder="0-100" inputmode="numeric">
+        <input type="number" min="1" max="10" step="1" class="duel-number-input" placeholder="1-10" inputmode="numeric">
         <button type="button" class="btn btn-primary" data-pick-btn="closest">Guess</button>
       </div>`;
     case "coin":

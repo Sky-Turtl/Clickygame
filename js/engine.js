@@ -44,7 +44,7 @@ function reactionDelay(duelId, round) {
 function resolveGame(duel, a, b, ctx) {
   switch (duel.game) {
     case "closest": {
-      const target = Math.floor(seededFloat(`${duel.id}|${ctx.at}|target`) * 101); // 0-100
+      const target = 1 + Math.floor(seededFloat(`${duel.id}|${ctx.at}|target`) * 10); // 1-10
       const da = Math.abs(Number(a) - target);
       const db = Math.abs(Number(b) - target);
       return { verdict: da < db ? 1 : da > db ? -1 : 0, detail: { target } };
