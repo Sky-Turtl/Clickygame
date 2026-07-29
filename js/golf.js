@@ -18,7 +18,7 @@ const HOLE_R = 9;
 const BALL_R = 6;
 const SINK_R = 10;
 const MAX_PULL = 80;
-const SHOT_SPEED = 6.5;
+const SHOT_SPEED = 4.5; // lower = softer max-power shots, more forgiving on a touch drag
 const FRICTION = 0.985;
 const STOP_SPEED = 0.06;
 const WALL_BOUNCE = 0.65; // energy kept off the side rails, so it damps out rather than bouncing forever
