@@ -6,7 +6,7 @@
 
 import { TIE_WINDOW_MS } from "../js/config.js";
 import { multiplierAt } from "../js/rules.js";
-import { applyClaim, applySettle, applyThrow } from "../js/engine.js";
+import { applyClaim, applyDoubleChoice, applySettle, applyThrow } from "../js/engine.js";
 
 const BOT = "bot_opponent";
 const clone = (v) => JSON.parse(JSON.stringify(v ?? null));
@@ -240,24 +240,49 @@ export async function trySettleDuel(code, duelId) {
 
   game.state = { ...game.state, duel: next };
 
-  if (next.status !== "resolved") {
+  if (next.status === "open") {
     emitAll(code);
     scheduleBotThrow(code, duelId);
     return { draw: true, duel: clone(next) };
   }
 
-  game.claims[next.disputedClaimId].status = "void";
-  game.claims[settleClaimId] = {
-    by: next.winner,
-    at,
-    rawSeconds: next.potRawSeconds,
-    multiplier: 1,
-    seconds: next.potSeconds,
-    status: "settled",
-    viaDuel: next.id,
-  };
+  if (next.status === "double_offer") {
+    emitAll(code);
+    scheduleBotDoubleChoice(code, duelId);
+    return { awaitingDouble: true, duel: clone(next) };
+  }
+
+  creditDuelWin(game, next, settleClaimId, at);
   emitAll(code);
   return { draw: false, duel: clone(next) };
+}
+
+export async function submitDoubleChoice(code, duelId, playerId, choice) {
+  const game = g(code);
+  const settleClaimId = nextId("s");
+  const at = now();
+  const next = applyDoubleChoice(game.state.duel, { duelId, playerId, choice, at, settleClaimId });
+  if (next === undefined || next.status !== "resolved") return null;
+
+  game.state = { ...game.state, duel: next };
+  creditDuelWin(game, next, settleClaimId, at);
+  emitAll(code);
+  return { duel: clone(next) };
+}
+
+function creditDuelWin(game, duel, settleClaimId, at) {
+  const mult = duel.payoutMultiplier || 1;
+  game.claims[duel.disputedClaimId].status = "void";
+  game.claims[settleClaimId] = {
+    by: duel.winner,
+    at,
+    rawSeconds: duel.potRawSeconds * mult,
+    multiplier: 1,
+    seconds: duel.potSeconds * mult,
+    status: "settled",
+    viaDuel: duel.id,
+    game: duel.game || null,
+  };
 }
 
 export async function claimAnnouncement(code, eventKey) {
@@ -336,8 +361,11 @@ function botPickFor(duel) {
     case "closest":
       return 1 + Math.floor(Math.random() * 10);
     case "coin":
+      return Math.random() < 0.5 ? "heads" : "tails";
     case "dice":
-      return true; // no real "choice" for these — just needs to be present
+      return true; // no real "choice" for this one — just needs to be present
+    case "golf":
+      return Math.random() * 70; // a plausible miss distance
     default: {
       const opts = ["rock", "paper", "scissors"];
       return opts[Math.floor(Math.random() * 3)];
@@ -365,9 +393,20 @@ function scheduleBotThrow(code, duelId) {
   setTimeout(() => {
     const cur = g(code).state.duel;
     if (cur?.id !== duelId || cur.status !== "open") return;
-    if ((cur.picks || {})[BOT]) return;
+    if ((cur.picks || {})[BOT] !== undefined) return;
     submitThrow(code, duelId, BOT, botPickFor(cur));
   }, 1200 + Math.random() * 1500);
+}
+
+/** If the bot won a coin flip, it decides take-or-double after a beat — mostly takes it. */
+function scheduleBotDoubleChoice(code, duelId) {
+  const duel = g(code).state.duel;
+  if (!duel || duel.winner !== BOT) return;
+  setTimeout(() => {
+    const cur = g(code).state.duel;
+    if (cur?.id !== duelId || cur.status !== "double_offer") return;
+    submitDoubleChoice(code, duelId, BOT, Math.random() < 0.7 ? "take" : "double");
+  }, 900 + Math.random() * 900);
 }
 
 /** Exposed on window so the demo page can poke the bot into claiming. */

@@ -322,7 +322,7 @@ input[type=date] { color-scheme: dark; }
 
 /* ---------- Game cards (the synced roster) ---------- */
 
-.game-list { display: flex; flex-direction: column; gap: 10px; }
+.game-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
 
 .game-card {
   display: flex;
@@ -823,6 +823,21 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-
 .duel-number-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
 .duel-number-input.bad { border-color: var(--red); }
 .duel-number button { flex: none; }
+
+.duel-double { display: flex; gap: 8px; }
+.duel-double .btn { flex: 1; padding: 16px 6px; font-size: 15px; font-weight: 700; }
+
+.golf-mount { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+.golf-canvas {
+  width: 100%;
+  max-width: 300px;
+  aspect-ratio: 300 / 170;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  touch-action: none;
+  cursor: grab;
+}
+.golf-hint { font-size: 12px; color: var(--text-faint); text-align: center; }
 
 .modal-status { font-size: 13.5px; color: var(--text-dim); text-align: center; margin: 16px 0 0; min-height: 20px; }
 .modal-lock { font-size: 12px; color: var(--text-faint); text-align: center; margin: 14px 0 0; }

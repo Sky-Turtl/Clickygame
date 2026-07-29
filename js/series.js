@@ -117,6 +117,12 @@ function leadAt(pts, t) {
 /**
  * Open/high/low/close of the lead, per time bucket — the candlestick data.
  *
+ * Buckets are anchored to `nowMs` and count backward, not aligned to the
+ * clock — so with 1h buckets and it's 1:28, the most recent one spans
+ * 12:28-1:28, not 1:00-2:00. That means every bucket edge (and the whole
+ * chart) shifts a little on every render; cheap to recompute since it's just
+ * a handful of buckets over an already-small claims list.
+ *
  * Open is the lead carried in from the previous bucket, so candles are
  * continuous: each bucket's open equals the previous bucket's close. High and
  * low span every intermediate value the lead actually took inside the bucket,
@@ -129,15 +135,14 @@ export function bucketOHLC(claims, meId, bucketMs, nowMs, limit = 60) {
   if (!pts.length) return [];
 
   const first = pts[0].at;
-  // Align buckets to epoch multiples so they don't shift as time passes.
-  const start = Math.floor(first / bucketMs) * bucketMs;
-  const end = Math.floor(nowMs / bucketMs) * bucketMs;
+  const count = Math.min(limit, Math.max(1, Math.ceil((nowMs - first) / bucketMs) + 1));
 
   const all = [];
-  for (let t0 = start; t0 <= end; t0 += bucketMs) {
-    const t1 = t0 + bucketMs;
+  for (let k = count - 1; k >= 0; k--) {
+    const t1 = nowMs - k * bucketMs;
+    const t0 = t1 - bucketMs;
     const open = leadAt(pts, t0);
-    const inside = pts.filter((p) => !p.origin && p.at > t0 && p.at <= Math.min(t1, nowMs));
+    const inside = pts.filter((p) => !p.origin && p.at > t0 && p.at <= t1);
     const close = inside.length ? inside[inside.length - 1].lead : open;
     const values = [open, close, ...inside.map((p) => p.lead)];
     all.push({
@@ -152,34 +157,35 @@ export function bucketOHLC(claims, meId, bucketMs, nowMs, limit = 60) {
     });
   }
 
-  return all.length > limit ? all.slice(-limit) : all;
+  return all;
 }
 
 /**
  * Per-bucket totals for each side — the stacked/line view behind the candles.
+ * Anchored to `nowMs` the same way bucketOHLC is — see its comment.
  * @param limit max buckets to return (most recent kept)
  */
 export function bucketTotals(claims, meId, bucketMs, nowMs, limit = 60) {
   const rows = claimRows(claims, meId);
   if (!rows.length) return [];
 
-  const start = Math.floor(rows[0].at / bucketMs) * bucketMs;
-  const end = Math.floor(nowMs / bucketMs) * bucketMs;
+  const first = rows[0].at;
+  const count = Math.min(limit, Math.max(1, Math.ceil((nowMs - first) / bucketMs) + 1));
 
-  const map = new Map();
-  for (let t0 = start; t0 <= end; t0 += bucketMs) {
-    map.set(t0, { t0, t1: t0 + bucketMs, mine: 0, theirs: 0 });
+  const buckets = [];
+  for (let k = count - 1; k >= 0; k--) {
+    const t1 = nowMs - k * bucketMs;
+    buckets.push({ t0: t1 - bucketMs, t1, mine: 0, theirs: 0 });
   }
   for (const r of rows) {
-    const t0 = Math.floor(r.at / bucketMs) * bucketMs;
-    const b = map.get(t0);
+    // Newest-first search is fine here — buckets.length is tiny (<= limit).
+    const b = buckets.find((x) => r.at > x.t0 && r.at <= x.t1);
     if (!b) continue;
     if (r.mine) b.mine += r.seconds;
     else b.theirs += r.seconds;
   }
 
-  const all = [...map.values()];
-  return all.length > limit ? all.slice(-limit) : all;
+  return buckets;
 }
 
 /** Pick the bucket size that yields a sensible number of candles for a span. */

@@ -33,6 +33,7 @@ import {
 import { BUCKETS, bucketOHLC, claimRows, groupRuns, sortRows } from "./series.js";
 import { barChart, candleChart, leadArea, legend } from "./charts.js";
 import { buildExport, countdownToClaims, parseImport } from "./importer.js";
+import { mountGolf } from "./golf.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -588,6 +589,71 @@ function renderProfile() {
   $("profile-games").querySelectorAll("[data-open]").forEach((el) =>
     el.addEventListener("click", () => openDetail(el.dataset.open))
   );
+
+  renderMinigameRecord(list);
+}
+
+const MINIGAME_PERIODS = [
+  { key: "1d", label: "Today", ms: 24 * 3600e3 },
+  { key: "1w", label: "This week", ms: 7 * 24 * 3600e3 },
+  { key: "1mo", label: "This month", ms: 30 * 24 * 3600e3 },
+  { key: "all", label: "All time", ms: Infinity },
+];
+
+/**
+ * Wins/losses in contested-claim duels, from claims settled `viaDuel`.
+ * The winner's claim carries `game` (which minigame decided it) and `by`
+ * (the winner) — since every game is strictly 1v1, any such claim not by me
+ * in a game I'm part of is a loss for me. Older duels settled before this
+ * field existed fall back to "unknown" rather than being dropped.
+ */
+function renderMinigameRecord(list) {
+  const sel = $("profile-minigame-filter");
+  if (sel.dataset.sig !== "set") {
+    sel.dataset.sig = "set";
+    sel.innerHTML =
+      `<option value="__all__">All minigames</option>` +
+      Object.entries(DUEL_META)
+        .map(([key, meta]) => `<option value="${key}">${meta.icon} ${esc(meta.label)}</option>`)
+        .join("");
+  }
+  const filter = sel.value || "__all__";
+
+  const now = db.now();
+  const grid = {}; // periodKey -> { wins, losses }
+  for (const p of MINIGAME_PERIODS) grid[p.key] = { wins: 0, losses: 0 };
+
+  for (const g of list) {
+    const meId = myId(g);
+    const opp = opponentOf(g);
+    if (!opp) continue;
+    for (const c of g.claims || []) {
+      if (!c.viaDuel || c.status !== "settled") continue;
+      const gameType = c.game || "unknown";
+      if (filter !== "__all__" && gameType !== filter) continue;
+      const won = c.by === meId;
+      if (!won && c.by !== opp.id) continue; // shouldn't happen in a 1v1, but don't misattribute
+      const age = now - c.at;
+      for (const p of MINIGAME_PERIODS) {
+        if (age > p.ms) continue;
+        if (won) grid[p.key].wins++;
+        else grid[p.key].losses++;
+      }
+    }
+  }
+
+  const head = `<thead><tr><th>Period</th><th>Wins</th><th>Losses</th><th>Win%</th></tr></thead>`;
+  const body =
+    `<tbody>` +
+    MINIGAME_PERIODS.map((p) => {
+      const { wins, losses } = grid[p.key];
+      const total = wins + losses;
+      const pct = total ? `${Math.round((wins / total) * 100)}%` : "—";
+      return `<tr><td>${p.label}</td><td class="num">${wins}</td><td class="num">${losses}</td><td class="num">${pct}</td></tr>`;
+    }).join("") +
+    `</tbody>`;
+
+  setHTML("profile-minigame-table", head + body);
 }
 
 // --- Derived helpers --------------------------------------------------------
@@ -621,7 +687,7 @@ function totalsFor(g) {
   const ids = Object.keys(g.players || {});
   // While a duel is unresolved its disputed claim is still marked 'settled' in
   // the database (see store.claim). Nobody owns that time yet, so hide it.
-  const escrowed = g.state?.duel?.status === "open" ? g.state.duel.disputedClaimId : null;
+  const escrowed = duelUnsettled(g.state?.duel) ? g.state.duel.disputedClaimId : null;
   const claims = escrowed ? (g.claims || []).filter((c) => c.id !== escrowed) : g.claims || [];
   const rows = summarize(claims, ids, db.now());
   return { ids, rows };
@@ -682,20 +748,30 @@ function catchUpWindow(g) {
   };
 }
 
+/** A duel that still has an undecided outcome — including a coin's double-or-nothing offer. */
+function duelUnsettled(d) {
+  return !!d && (d.status === "open" || d.status === "double_offer");
+}
+
 function openDuelFor(g) {
   const d = g.state?.duel;
-  if (!d || d.status !== "open") return null;
+  if (!duelUnsettled(d)) return null;
   if (d.challenger !== myId(g) && d.defender !== myId(g)) return null;
   return d;
 }
 
-/** Duels I'm in that I haven't picked for yet — these block the claim button. */
+/** Duels I'm in that need an action from me — these block the claim button. */
 function pendingThrows() {
   const out = [];
   for (const g of games.values()) {
     const d = openDuelFor(g);
-    const mine = d && (d.picks || {})[myId(g)];
-    if (d && mine === undefined) out.push({ g, duel: d });
+    if (!d) continue;
+    if (d.status === "open") {
+      const mine = (d.picks || {})[myId(g)];
+      if (mine === undefined) out.push({ g, duel: d });
+    } else if (d.status === "double_offer" && d.winner === myId(g)) {
+      out.push({ g, duel: d });
+    }
   }
   return out;
 }
@@ -717,7 +793,7 @@ function claimableGames() {
         g &&
         g.meta &&
         !isOver(g) &&
-        !(g.state?.duel?.status === "open") &&
+        !duelUnsettled(g.state?.duel) &&
         cooldownLeft(g) === 0
     );
 }
@@ -728,7 +804,7 @@ function coolingGames() {
     .filter((r) => r.synced !== false)
     .map((r) => games.get(r.code))
     .filter(
-      (g) => g && g.meta && !isOver(g) && !(g.state?.duel?.status === "open") && cooldownLeft(g) > 0
+      (g) => g && g.meta && !isOver(g) && !duelUnsettled(g.state?.duel) && cooldownLeft(g) > 0
     );
 }
 
@@ -1241,7 +1317,7 @@ function renderCharts(list, single) {
   // Merge every in-scope game's claims into one stream keyed to me-vs-them.
   const merged = [];
   for (const g of list) {
-    const escrowed = g.state?.duel?.status === "open" ? g.state.duel.disputedClaimId : null;
+    const escrowed = duelUnsettled(g.state?.duel) ? g.state.duel.disputedClaimId : null;
     for (const c of g.claims || []) {
       if (c.status !== "settled" || c.id === escrowed) continue;
       merged.push({ ...c, by: c.by === myId(g) ? "__me__" : "__them__" });
@@ -1562,7 +1638,7 @@ function renderFeed(hostId, g, limit) {
     );
   }
 
-  const escrowedId = g.state?.duel?.status === "open" ? g.state.duel.disputedClaimId : null;
+  const escrowedId = duelUnsettled(g.state?.duel) ? g.state.duel.disputedClaimId : null;
   const feedRows = claimRows(g.claims || [], myId(g));
   const runs = groupRuns(feedRows).reverse().slice(0, limit);
 
@@ -1758,7 +1834,7 @@ function allActiveDuels() {
   for (const g of games.values()) {
     const d = g.state?.duel;
     if (!d || (d.challenger !== myId(g) && d.defender !== myId(g))) continue;
-    if (d.status === "open") out.push({ g, duel: d });
+    if (d.status === "open" || d.status === "double_offer") out.push({ g, duel: d });
     else if (d.status === "resolved" && !dismissedResults.has(d.id)) out.push({ g, duel: d });
   }
   return out;
@@ -1822,7 +1898,19 @@ function renderDuelModal() {
         await db.submitThrow(g.code, curDuel.id, myId(g), value);
         render();
       };
+      // Exposed so the golf mount (outside this closure, in the main render
+      // loop) can submit the shot's distance the same way a button pick does.
+      modal._submitPick = submitPick;
       pickerEl.addEventListener("click", (e) => {
+        const doubleBtn = e.target.closest("[data-double]");
+        if (doubleBtn) {
+          const cur = games.get(g.code);
+          const curDuel = cur?.state?.duel;
+          if (!curDuel || curDuel.id !== d.id) return;
+          pickerEl.querySelectorAll("button").forEach((b) => (b.disabled = true));
+          db.submitDoubleChoice(g.code, curDuel.id, myId(g), doubleBtn.dataset.double).then(render);
+          return;
+        }
         const numBtn = e.target.closest('[data-pick-btn="closest"]');
         if (numBtn) {
           const input = pickerEl.querySelector(".duel-number-input");
@@ -1837,7 +1925,7 @@ function renderDuelModal() {
         const btn = e.target.closest("[data-pick]");
         if (!btn || btn.disabled) return;
         const kind = btn.dataset.pick;
-        submitPick(kind === "tap" ? db.now() : kind === "flip" || kind === "roll" ? true : kind);
+        submitPick(kind === "tap" ? db.now() : kind === "roll" ? true : kind);
       });
       pickerEl.addEventListener("keydown", (e) => {
         if (e.key !== "Enter" || !e.target.classList?.contains("duel-number-input")) return;
@@ -1871,14 +1959,18 @@ function renderDuelModal() {
     el("pot").innerHTML = `<div class="pot-label">In escrow${d.round > 1 ? ` · round ${d.round}` : ""}</div>
       <div class="pot-value">${fmtDuration(d.potSeconds)}</div>`;
 
-    // Picker
+    // Picker (also hosts the coin's double-or-nothing choice, once decided)
     const pickerEl = el("picker");
     pickerEl.classList.toggle("hidden", resolved);
     if (!resolved) {
-      const sig = `${d.game}|${iPicked}|${d.game === "reaction" ? db.now() >= d.goAt : ""}`;
+      const sig = `${d.status}|${d.game}|${iPicked}|${d.game === "reaction" ? db.now() >= d.goAt : ""}`;
       if (pickerEl.dataset.sig !== sig) {
         pickerEl.dataset.sig = sig;
-        pickerEl.innerHTML = pickerHtml(d, iPicked);
+        pickerEl.innerHTML = pickerHtml(d, iPicked, meId);
+        if (d.game === "golf" && d.status === "open" && !iPicked) {
+          const mount = pickerEl.querySelector(".golf-mount");
+          if (mount) mountGolf(mount, d.id, (distance) => modal._submitPick(distance));
+        }
       }
     }
 
@@ -1892,21 +1984,33 @@ function renderDuelModal() {
       const iWon = d.winner === meId;
       statusEl.textContent = "";
       resultEl.classList.remove("hidden");
+      const doubleNote = d.doubled
+        ? d.doubleLost
+          ? `<div class="rr-detail">Double-or-nothing gone wrong — the win flipped sides on the extra flip.</div>`
+          : `<div class="rr-detail">Doubled it! 🔥</div>`
+        : "";
       resultEl.innerHTML = `
         <div class="rr-throws">${resultDetailHtml(d, meId, oppId, oppName)}</div>
         <div class="rr-verdict ${iWon ? "won" : "lost"}">${iWon ? "You take it" : "You lose it"}</div>
         <div class="rr-detail">${
           iWon
-            ? `${fmtDuration(d.potSeconds)} banked. ${esc(oppName)} gets nothing.`
-            : `${esc(oppName)} takes ${fmtDuration(d.potSeconds)}.`
-        }</div>`;
+            ? `${fmtDuration(d.potSeconds * (d.payoutMultiplier || 1))} banked. ${esc(oppName)} gets nothing.`
+            : `${esc(oppName)} takes ${fmtDuration(d.potSeconds * (d.payoutMultiplier || 1))}.`
+        }</div>
+        ${doubleNote}`;
       dismissEl.classList.remove("hidden");
       lockEl.classList.add("hidden");
     } else {
       resultEl.classList.add("hidden");
       dismissEl.classList.add("hidden");
-      lockEl.classList.toggle("hidden", iPicked);
-      if (!iPicked) {
+      lockEl.classList.remove("hidden"); // still locked either way — waiting on a pick or a double-or-nothing choice
+
+      if (d.status === "double_offer") {
+        statusEl.textContent =
+          d.winner === meId
+            ? "You called it. Bank it, or push your luck?"
+            : `${oppName} called it right — deciding whether to take it or go double or nothing.`;
+      } else if (!iPicked) {
         statusEl.textContent = theyPicked ? `${oppName} has moved. Your turn.` : "Make your move.";
       } else {
         statusEl.textContent = `Locked in. Waiting for ${oppName}…`;
@@ -1915,8 +2019,18 @@ function renderDuelModal() {
   }
 }
 
-/** Markup for whatever's needed to make a pick in this duel's minigame. */
-function pickerHtml(d, iPicked) {
+/** Markup for whatever's needed to make a pick — or a double-or-nothing choice — in this duel. */
+function pickerHtml(d, iPicked, meId) {
+  if (d.status === "double_offer") {
+    if (d.winner !== meId) {
+      return `<div class="duel-locked">Waiting on their call…</div>`;
+    }
+    return `<div class="duel-double">
+      <button type="button" class="btn btn-primary" data-double="take">Take it</button>
+      <button type="button" class="btn btn-ghost" data-double="double">Double or nothing</button>
+    </div>`;
+  }
+
   if (iPicked) return `<div class="duel-locked">Locked in. Waiting for the other side…</div>`;
 
   switch (d.game) {
@@ -1926,7 +2040,10 @@ function pickerHtml(d, iPicked) {
         <button type="button" class="btn btn-primary" data-pick-btn="closest">Guess</button>
       </div>`;
     case "coin":
-      return `<button type="button" class="btn btn-primary duel-tap" data-pick="flip">🪙 Flip the coin</button>`;
+      return `<div class="throws">
+        <button class="throw" data-pick="heads"><span>🪙</span>Heads</button>
+        <button class="throw" data-pick="tails"><span>🪙</span>Tails</button>
+      </div>`;
     case "dice":
       return `<button type="button" class="btn btn-primary duel-tap" data-pick="roll">🎲 Roll the die</button>`;
     case "reaction": {
@@ -1935,6 +2052,8 @@ function pickerHtml(d, iPicked) {
         ? `<button type="button" class="btn btn-primary duel-tap go" data-pick="tap">TAP NOW!</button>`
         : `<button type="button" class="btn btn-ghost duel-tap wait" data-pick="tap">Wait for it…</button>`;
     }
+    case "golf":
+      return `<div class="golf-mount"></div>`;
     case "rps":
     default:
       return `<div class="throws">${THROWS.map(
@@ -1954,12 +2073,23 @@ function resultDetailHtml(d, meId, oppId, oppName) {
       return `You guessed ${esc(String(picks[meId]))} · ${esc(oppName)} guessed ${esc(
         String(picks[oppId])
       )} · target was ${detail.target}`;
-    case "coin":
-      return `🪙 Landed on ${detail.flip === "heads" ? "heads" : "tails"}`;
+    case "coin": {
+      const mineCall = picks[meId] === "heads" ? "heads" : "tails";
+      const oppCall = picks[oppId] === "heads" ? "heads" : "tails";
+      return `You called ${mineCall}, ${esc(oppName)} called ${oppCall} · 🪙 landed on ${
+        detail.result === "heads" ? "heads" : "tails"
+      }`;
+    }
     case "dice": {
       const mine = mineIsChallenger ? detail.rollA : detail.rollB;
       const theirs = mineIsChallenger ? detail.rollB : detail.rollA;
       return `🎲 You rolled ${mine} · ${esc(oppName)} rolled ${theirs}`;
+    }
+    case "golf": {
+      const mine = mineIsChallenger ? detail.distA : detail.distB;
+      const theirs = mineIsChallenger ? detail.distB : detail.distA;
+      const fmtD = (x) => (x === 0 ? "sunk it!" : `${Math.round(x)} from the hole`);
+      return `⛳ You ${fmtD(mine)} · ${esc(oppName)} ${fmtD(theirs)}`;
     }
     case "reaction": {
       const mineFalse = mineIsChallenger ? detail.falseStartA : detail.falseStartB;
@@ -2024,4 +2154,5 @@ function wireAccount() {
   });
   $("btn-view-profile").addEventListener("click", () => showScreen("profile"));
   $("btn-profile-back").addEventListener("click", goHome);
+  $("profile-minigame-filter").addEventListener("change", () => renderProfile());
 }

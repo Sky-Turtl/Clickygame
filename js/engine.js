@@ -15,13 +15,14 @@ import { hashString, mulberry32 } from "./util.js";
 //
 // A contested claim is settled by one of a few minigames, chosen at random
 // when the duel opens. Anything that needs "randomness" (which game, a
-// target number, dice rolls, a coin flip, a reaction delay) is derived from a
-// seeded PRNG rather than stored separately — same trick as the 2x windows in
-// rules.js. Seeds mix in ctx.at (the settle transaction's timestamp) wherever
-// the value must stay hidden from both players until after they've committed
-// their picks, so nobody can reverse the formula to guarantee a win.
+// target number, dice rolls, a coin flip, a reaction delay, the golf course)
+// is derived from a seeded PRNG rather than stored separately — same trick as
+// the 2x windows in rules.js. Seeds mix in ctx.at (the settle transaction's
+// timestamp) wherever the value must stay hidden from both players until
+// after they've committed their picks, so nobody can reverse the formula to
+// guarantee a win.
 
-export const DUEL_GAMES = ["rps", "closest", "coin", "dice", "reaction"];
+export const DUEL_GAMES = ["rps", "closest", "coin", "dice", "reaction", "golf"];
 
 function seededFloat(seed) {
   return mulberry32(hashString(seed))();
@@ -50,8 +51,15 @@ function resolveGame(duel, a, b, ctx) {
       return { verdict: da < db ? 1 : da > db ? -1 : 0, detail: { target } };
     }
     case "coin": {
+      // Both sides call heads or tails before the flip. Calling it right wins;
+      // calling the same side as your opponent (both right or both wrong
+      // together) settles nothing, so it redraws.
       const heads = seededFloat(`${duel.id}|${ctx.at}|coin`) < 0.5;
-      return { verdict: heads ? 1 : -1, detail: { flip: heads ? "heads" : "tails" } };
+      const result = heads ? "heads" : "tails";
+      const aRight = a === result;
+      const bRight = b === result;
+      if (aRight === bRight) return { verdict: 0, detail: { result } };
+      return { verdict: aRight ? 1 : -1, detail: { result } };
     }
     case "dice": {
       const rollA = 1 + Math.floor(seededFloat(`${duel.id}|${duel.challenger}|${ctx.at}`) * 6);
@@ -69,6 +77,13 @@ function resolveGame(duel, a, b, ctx) {
       else if (bFalse) verdict = 1;
       else verdict = la < lb ? 1 : la > lb ? -1 : 0;
       return { verdict, detail: { latencyA: la, latencyB: lb, falseStartA: aFalse, falseStartB: bFalse } };
+    }
+    case "golf": {
+      // Picks are each player's final distance from the hole (0 = sunk),
+      // played out locally in the mini-putt widget — see golf.js. Closest wins.
+      const da = Number(a);
+      const db = Number(b);
+      return { verdict: da < db ? 1 : da > db ? -1 : 0, detail: { distA: da, distB: db } };
     }
     case "rps":
     default:
@@ -90,8 +105,11 @@ export function applyClaim(state, ctx) {
   // The deadline has passed — the clock is stopped for good.
   if (state.endsAt && ctx.at > state.endsAt) return undefined;
 
-  // Hard freeze while a duel is unsettled.
-  if (state.duel && state.duel.status === "open") return undefined;
+  // Hard freeze while a duel is unsettled — including a coin's double-or-
+  // nothing offer, which is still an open question about who gets the pot.
+  if (state.duel && (state.duel.status === "open" || state.duel.status === "double_offer")) {
+    return undefined;
+  }
 
   // Per-player cooldown. Checked here rather than only in the UI so it holds
   // even against a doctored client.
@@ -155,6 +173,11 @@ export function applyClaim(state, ctx) {
 /**
  * Both picks are in — decide the duel via whichever minigame it rolled.
  *
+ * A coin duel doesn't go straight to "resolved": the winner gets first offered
+ * a double-or-nothing redo (see applyDoubleChoice), so it lands on
+ * "double_offer" instead and waits on that decision before any claim is
+ * credited.
+ *
  * @param duel current duel node
  * @param ctx  { at, settleClaimId, duelId }
  * @returns new duel, or undefined to abort (wrong duel, already settled, or
@@ -182,16 +205,66 @@ export function applySettle(duel, ctx) {
     return next;
   }
 
+  const winner = verdict > 0 ? duel.challenger : duel.defender;
+  const loser = verdict > 0 ? duel.defender : duel.challenger;
+
+  if (duel.game === "coin") {
+    return { ...duel, status: "double_offer", winner, loser, finalPicks: picks, detail, decidedAt: ctx.at };
+  }
+
   return {
     ...duel,
     status: "resolved",
-    winner: verdict > 0 ? duel.challenger : duel.defender,
-    loser: verdict > 0 ? duel.defender : duel.challenger,
+    winner,
+    loser,
     finalPicks: picks,
     detail,
+    payoutMultiplier: 1,
     resolvedAt: ctx.at,
     // Our fingerprint: whichever client's value survives the transaction is the
     // one responsible for writing the settlement to the claims log.
+    settleClaimId: ctx.settleClaimId,
+  };
+}
+
+/**
+ * The coin winner takes their win, or gambles it on one more flip for double.
+ * Losing the double-or-nothing flip hands the whole (undoubled) pot to the
+ * original loser instead — the winner's win is what's at stake, not a second
+ * independent wager.
+ *
+ * @param duel current duel node
+ * @param ctx  { duelId, playerId, choice: "take"|"double", at, settleClaimId }
+ */
+export function applyDoubleChoice(duel, ctx) {
+  if (!duel || duel.id !== ctx.duelId || duel.status !== "double_offer") return undefined;
+  if (ctx.playerId !== duel.winner) return undefined;
+
+  if (ctx.choice === "take") {
+    return { ...duel, status: "resolved", payoutMultiplier: 1, resolvedAt: ctx.at, settleClaimId: ctx.settleClaimId };
+  }
+  if (ctx.choice !== "double") return undefined;
+
+  const wonAgain = seededFloat(`${duel.id}|${ctx.at}|double`) < 0.5;
+  if (wonAgain) {
+    return {
+      ...duel,
+      status: "resolved",
+      payoutMultiplier: 2,
+      doubled: true,
+      resolvedAt: ctx.at,
+      settleClaimId: ctx.settleClaimId,
+    };
+  }
+  return {
+    ...duel,
+    status: "resolved",
+    winner: duel.loser,
+    loser: duel.winner,
+    payoutMultiplier: 1,
+    doubled: true,
+    doubleLost: true,
+    resolvedAt: ctx.at,
     settleClaimId: ctx.settleClaimId,
   };
 }

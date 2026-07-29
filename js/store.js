@@ -43,7 +43,7 @@ import {
 
 import { firebaseConfig, MIN_CLAIM_INTERVAL_MS, TIE_WINDOW_MS } from "./config.js";
 import { multiplierAt } from "./rules.js";
-import { applyClaim, applySettle, applyThrow } from "./engine.js";
+import { applyClaim, applyDoubleChoice, applySettle, applyThrow } from "./engine.js";
 
 let db = null;
 let auth = null;
@@ -407,12 +407,32 @@ export async function submitThrow(code, duelId, playerId, choice) {
   );
 }
 
+/** Void the disputed claim and write the settlement, honoring a coin's double-or-nothing multiplier. */
+async function creditDuelWin(code, duel, settleClaimId, at) {
+  const mult = duel.payoutMultiplier || 1;
+  await update(gameRef(code), {
+    [`claims/${duel.disputedClaimId}/status`]: "void",
+    [`claims/${settleClaimId}`]: {
+      by: duel.winner,
+      at,
+      rawSeconds: duel.potRawSeconds * mult,
+      multiplier: 1, // the 2x was already applied when the pot was formed
+      seconds: duel.potSeconds * mult,
+      status: "settled",
+      viaDuel: duel.id,
+      game: duel.game || null, // which minigame decided it, for the profile's minigame record
+    },
+  });
+}
+
 /**
  * Called by every client whenever the duel node changes. Both players race to
  * settle; the transaction guarantees exactly one of them does the writing.
  *
- * @returns null, or {draw:true} / {winner, loser, throws, potSeconds} for the
- *          single client that actually performed the settlement.
+ * @returns null, {draw:true, duel}, {awaitingDouble:true, duel} — a coin duel
+ *          landed on its winner's double-or-nothing choice, nothing to credit
+ *          yet — or {draw:false, duel} for the single client that actually
+ *          performed the settlement.
  */
 export async function trySettleDuel(code, duelId) {
   const settleClaimId = push(child(gameRef(code), "claims")).key;
@@ -433,23 +453,35 @@ export async function trySettleDuel(code, duelId) {
     return null;
   }
 
+  if (duel.status === "double_offer") return { awaitingDouble: true, duel };
+
   // Resolved — but was it us who resolved it?
   if (duel.settleClaimId !== settleClaimId) return null;
 
-  await update(gameRef(code), {
-    [`claims/${duel.disputedClaimId}/status`]: "void",
-    [`claims/${settleClaimId}`]: {
-      by: duel.winner,
-      at,
-      rawSeconds: duel.potRawSeconds,
-      multiplier: 1, // the 2x was already applied when the pot was formed
-      seconds: duel.potSeconds,
-      status: "settled",
-      viaDuel: duel.id,
-    },
-  });
-
+  await creditDuelWin(code, duel, settleClaimId, at);
   return { draw: false, duel };
+}
+
+/**
+ * The coin winner has decided: bank the pot now, or risk it on one more flip
+ * for double. Same single-writer guarantee as trySettleDuel.
+ *
+ * @returns null, or {duel} for the client whose choice actually landed.
+ */
+export async function submitDoubleChoice(code, duelId, playerId, choice) {
+  const settleClaimId = push(child(gameRef(code), "claims")).key;
+  const at = now();
+
+  const result = await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>
+    applyDoubleChoice(duel, { duelId, playerId, choice, at, settleClaimId })
+  );
+
+  if (!result.committed) return null;
+  const duel = result.snapshot.val();
+  if (!duel || duel.status !== "resolved" || duel.settleClaimId !== settleClaimId) return null;
+
+  await creditDuelWin(code, duel, settleClaimId, at);
+  return { duel };
 }
 
 // --- Webhook dedupe ---------------------------------------------------------

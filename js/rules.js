@@ -105,7 +105,7 @@ export const DUEL_META = {
   coin: {
     label: "Coin flip",
     icon: "🪙",
-    rule: "Pure chance — tap to flip. Winner takes the whole pot.",
+    rule: "Call heads or tails before the flip. Call it right and you win — call the same side as them and it's a redraw. The winner can then take it or go double-or-nothing on one more flip.",
   },
   dice: {
     label: "Dice roll",
@@ -116,6 +116,11 @@ export const DUEL_META = {
     label: "Reaction test",
     icon: "⚡",
     rule: "Wait for GO, then tap as fast as you can. Jumping the gun loses outright.",
+  },
+  golf: {
+    label: "Mini golf",
+    icon: "⛳",
+    rule: "One putt each — drag back and release. Closest to the hole wins; sink it and you can't lose.",
   },
 };
 
