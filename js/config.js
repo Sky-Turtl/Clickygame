@@ -44,7 +44,7 @@ export const firebaseConfig = {
 //
 // Leave this blank to skip App Check (the site still works, just without
 // this protection).
-export const RECAPTCHA_SITE_KEY = "";
+export const RECAPTCHA_SITE_KEY = "6LeuyWstAAAAAFQwEdXJO_uMT0STeQyvOpH2tDVA";
 
 
 // --- Game tuning ------------------------------------------------------------
