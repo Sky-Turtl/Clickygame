@@ -69,7 +69,10 @@ const me = {
  * than taking the second seat. `me.id` is only the fallback for a game this
  * device created or joined first.
  */
-let roster = store.get("roster", []); // [{ code, synced, playerId }]
+// Demo games get their own roster key so a browser's real games and its
+// throwaway demo games never bleed into each other's "My games" list.
+const ROSTER_KEY = IS_DEMO ? "demoRoster" : "roster";
+let roster = store.get(ROSTER_KEY, []); // [{ code, synced, playerId }]
 
 /** This device's player id in a given game. */
 const myIdIn = (code) => roster.find((r) => r.code === code)?.playerId || me.id;
@@ -129,6 +132,20 @@ let leadZoom = null;
   if (linked) {
     switchTab("join");
     $("join-code").value = linked.toUpperCase();
+  }
+
+  // The demo store is in-memory only, so it's wiped on every refresh — drop
+  // any roster entries left pointing at games that no longer exist rather
+  // than showing them as stuck/empty.
+  if (IS_DEMO) {
+    const alive = [];
+    for (const entry of roster) {
+      if (await db.gameExists(entry.code)) alive.push(entry);
+    }
+    if (alive.length !== roster.length) {
+      roster = alive;
+      store.set(ROSTER_KEY, roster);
+    }
   }
 
   for (const entry of roster) watchGameCode(entry.code);
@@ -414,7 +431,7 @@ function saveProfile(name, discordId) {
 
 /** Save the roster locally, and to the account (if logged in) for other devices. */
 function persistRoster() {
-  store.set("roster", roster);
+  store.set(ROSTER_KEY, roster);
   if (account) db.setAccountRoster(account.uid, rosterToObj(roster));
 }
 
@@ -495,7 +512,7 @@ async function onAccountChange(acct) {
   await db.setAccountRoster(acct.uid, merged);
 
   roster = objToRoster(merged);
-  store.set("roster", roster);
+  store.set(ROSTER_KEY, roster);
   for (const r of roster) watchGameCode(r.code);
 
   // Land on the hub if logging in surfaced games and we're just sitting on
@@ -514,7 +531,7 @@ async function onAccountChange(acct) {
       }
     }
     if (changed) {
-      store.set("roster", roster);
+      store.set(ROSTER_KEY, roster);
       render();
     }
   });
