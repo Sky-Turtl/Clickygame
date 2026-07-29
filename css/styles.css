@@ -335,7 +335,22 @@ input[type=date] { color-scheme: dark; }
 }
 .game-card.duel { border-color: rgba(255,92,114,.5); }
 .game-card.over { opacity: .6; }
-.game-card.loading { padding: 16px; color: var(--text-faint); }
+.game-card.loading { color: var(--text-faint); }
+.game-card.loading .gc-main { cursor: default; }
+.game-card.loading .gc-main:hover { background: none; }
+
+.gc-remove {
+  flex: 0 0 auto;
+  width: 44px;
+  border: none;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 15px;
+  transition: background .15s, color .15s;
+}
+.gc-remove:hover { background: rgba(255,92,114,.12); color: #ff5c72; }
 
 .gc-main {
   flex: 1;

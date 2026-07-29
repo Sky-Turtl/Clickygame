@@ -1213,8 +1213,11 @@ function renderGameList() {
     .map((entry) => {
       const g = games.get(entry.code);
       if (!g || !g.meta) {
-        return `<div class="game-card loading"><div class="gc-name">${esc(entry.code)}</div>
-                <div class="gc-sub">loading…</div></div>`;
+        return `<div class="game-card loading">
+                <div class="gc-main"><div class="gc-name">${esc(entry.code)}</div>
+                <div class="gc-sub">loading…</div></div>
+                <button class="gc-remove" data-forget="${esc(entry.code)}" title="Remove — this game never loaded">✕</button>
+                </div>`;
       }
 
       const { rows } = totalsFor(g);
@@ -1328,6 +1331,15 @@ function renderGameList() {
     );
     host.querySelectorAll("[data-open]").forEach((b) =>
       b.addEventListener("click", () => openDetail(b.dataset.open))
+    );
+    host.querySelectorAll("[data-forget]").forEach((b) =>
+      b.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const code = b.dataset.forget;
+        if (confirm(`Remove ${code}? It never finished loading, so it'll just be forgotten here.`)) {
+          removeFromRoster(code);
+        }
+      })
     );
   }
 }
