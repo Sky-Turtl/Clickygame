@@ -13,8 +13,7 @@
 
 const W = 300;
 const H = 170;
-const TEE = { x: W / 2, y: H - 22 };
-const HOLE_Y = 26;
+const EDGE_MARGIN = 22; // how close the tee/hole sit to whichever edge they're placed on
 const HOLE_R = 12; // lenient — a rolling ball that clips the cup counts
 const BALL_R = 6;
 const SINK_R = 14;
@@ -37,24 +36,53 @@ function seededRand(seedStr) {
 }
 
 /**
+ * Tee and hole always land on opposite edges of the green (top/bottom or
+ * left/right) so every shot has to cross the whole course, but which pair of
+ * edges — and which one gets the tee vs. the hole — varies per duel.
+ */
+function pickLayout(seed) {
+  const horizontal = seededRand(seed + "|axis") < 0.5;
+  const teeFirst = seededRand(seed + "|dir") < 0.5;
+  if (horizontal) {
+    const holeOffset = (seededRand(seed + "|hole") - 0.5) * 2 * 50; // -50..50
+    const teeY = Math.max(30, Math.min(H - 30, H / 2 - holeOffset));
+    const holeY = Math.max(30, Math.min(H - 30, H / 2 + holeOffset));
+    const a = EDGE_MARGIN;
+    const b = W - EDGE_MARGIN;
+    return teeFirst
+      ? { tee: { x: b, y: teeY }, hole: { x: a, y: holeY } }
+      : { tee: { x: a, y: teeY }, hole: { x: b, y: holeY } };
+  }
+  const holeOffset = (seededRand(seed + "|hole") - 0.5) * 2 * 70; // -70..70
+  const teeX = Math.max(30, Math.min(W - 30, W / 2 - holeOffset));
+  const holeX = Math.max(30, Math.min(W - 30, W / 2 + holeOffset));
+  const a = EDGE_MARGIN;
+  const b = H - EDGE_MARGIN;
+  return teeFirst
+    ? { tee: { x: teeX, y: b }, hole: { x: holeX, y: a } }
+    : { tee: { x: teeX, y: a }, hole: { x: holeX, y: b } };
+}
+
+/**
  * A tie (both players' shots landing at equal distance from the hole,
  * including both sinking it) replays as another round — see engine.js's
  * resolveGame/applySettle. Each replay adds one more obstacle to the green,
  * seeded off the round number so it's the same extra rock for both players.
  */
-function placeObstacles(seed, round, hole) {
+function placeObstacles(seed, round, tee, hole) {
   const count = Math.max(0, round - 1);
   const obstacles = [];
+  const margin = 18;
   for (let i = 0; i < count; i++) {
     let x, y, tries = 0;
     do {
-      x = 24 + seededRand(`${seed}|obs${i}|x|${tries}`) * (W - 48);
-      y = HOLE_Y + 34 + seededRand(`${seed}|obs${i}|y|${tries}`) * (TEE.y - HOLE_Y - 68);
+      x = margin + seededRand(`${seed}|obs${i}|x|${tries}`) * (W - margin * 2);
+      y = margin + seededRand(`${seed}|obs${i}|y|${tries}`) * (H - margin * 2);
       tries++;
     } while (
       tries < 40 &&
       (Math.hypot(x - hole.x, y - hole.y) < 34 ||
-        Math.hypot(x - TEE.x, y - TEE.y) < 34 ||
+        Math.hypot(x - tee.x, y - tee.y) < 34 ||
         obstacles.some((o) => Math.hypot(x - o.x, y - o.y) < OBSTACLE_R * 2 + 12))
     );
     obstacles.push({ x, y });
@@ -70,9 +98,8 @@ function placeObstacles(seed, round, hole) {
  * @returns {destroy()} to unhook listeners if the modal goes away mid-shot
  */
 export function mountGolf(container, seed, round, onDone) {
-  const holeOffset = (seededRand(seed + "|hole") - 0.5) * 2 * 70; // -70..70
-  const hole = { x: Math.max(30, Math.min(W - 30, W / 2 + holeOffset)), y: HOLE_Y };
-  const obstacles = placeObstacles(seed, round || 1, hole);
+  const { tee, hole } = pickLayout(seed);
+  const obstacles = placeObstacles(seed, round || 1, tee, hole);
 
   container.innerHTML = "";
   const canvas = document.createElement("canvas");
@@ -88,11 +115,15 @@ export function mountGolf(container, seed, round, onDone) {
   actions.className = "golf-actions hidden";
   actions.innerHTML = `
     <button type="button" class="btn btn-ghost" data-golf="reaim">Re-aim</button>
-    <button type="button" class="btn btn-primary" data-golf="putt">Putt</button>`;
+    <button type="button" class="btn btn-primary" data-golf="putt">Putt</button>
+    <button type="button" class="btn btn-ghost hidden" data-golf="replay">Watch replay</button>`;
   container.appendChild(actions);
+  const replayBtn = actions.querySelector('[data-golf="replay"]');
+  const reaimBtn = actions.querySelector('[data-golf="reaim"]');
+  const puttBtn = actions.querySelector('[data-golf="putt"]');
 
   const ctx = canvas.getContext("2d");
-  const ball = { x: TEE.x, y: TEE.y };
+  const ball = { x: tee.x, y: tee.y };
   let vel = null; // {x,y} once the shot is in flight
   let pending = null; // {x,y} confirmed shot velocity, waiting on the Putt button
   let dragging = false;
@@ -100,6 +131,9 @@ export function mountGolf(container, seed, round, onDone) {
   let done = false;
   let frame = 0;
   let raf = null;
+  const path = [{ x: ball.x, y: ball.y }]; // every frame of the shot, for the post-shot replay
+  let replayRaf = null;
+  let finalHint = ""; // restored after a replay finishes
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
@@ -193,6 +227,10 @@ export function mountGolf(container, seed, round, onDone) {
       draw();
       return;
     }
+    if (btn.dataset.golf === "replay") {
+      playReplay();
+      return;
+    }
     // Putt: hand the confirmed velocity to the physics sim.
     vel = pending;
     pending = null;
@@ -201,6 +239,37 @@ export function mountGolf(container, seed, round, onDone) {
     raf = requestAnimationFrame(tick);
   }
   actions.addEventListener("click", onAction);
+
+  // Steps back through the recorded shot path so a finished shot can be
+  // watched again — same ball/hole/obstacles, just replaying the motion.
+  // Only the local player's own shot is available to replay for now; a
+  // future version could carry the opponent's recorded path over the wire
+  // the same way and reuse this exact playback.
+  function playReplay() {
+    if (replayRaf) return; // already playing
+    replayBtn.disabled = true;
+    let i = 0;
+    const savedX = ball.x;
+    const savedY = ball.y;
+    hint.textContent = "Replaying your shot…";
+    function step() {
+      if (i >= path.length) {
+        ball.x = savedX;
+        ball.y = savedY;
+        draw();
+        hint.textContent = finalHint;
+        replayBtn.disabled = false;
+        replayRaf = null;
+        return;
+      }
+      ball.x = path[i].x;
+      ball.y = path[i].y;
+      draw();
+      i++;
+      replayRaf = requestAnimationFrame(step);
+    }
+    replayRaf = requestAnimationFrame(step);
+  }
 
   function tick() {
     if (done) return;
@@ -247,6 +316,8 @@ export function mountGolf(container, seed, round, onDone) {
       }
     }
 
+    path.push({ x: ball.x, y: ball.y });
+
     const speed = Math.hypot(vel.x, vel.y);
     const distToHole = Math.hypot(ball.x - hole.x, ball.y - hole.y);
     const sunk = distToHole < SINK_R && speed < 1.6;
@@ -256,7 +327,12 @@ export function mountGolf(container, seed, round, onDone) {
     if (sunk || speed < STOP_SPEED || frame > MAX_FRAMES) {
       done = true;
       const finalDist = sunk ? 0 : distToHole;
-      hint.textContent = sunk ? "🏌️ Sunk it!" : `${Math.round(finalDist)} from the hole.`;
+      finalHint = sunk ? "🏌️ Sunk it!" : `${Math.round(finalDist)} from the hole.`;
+      hint.textContent = finalHint;
+      reaimBtn.classList.add("hidden");
+      puttBtn.classList.add("hidden");
+      replayBtn.classList.remove("hidden");
+      actions.classList.remove("hidden");
       onDone(finalDist);
       return;
     }
@@ -268,6 +344,7 @@ export function mountGolf(container, seed, round, onDone) {
   return {
     destroy() {
       if (raf) cancelAnimationFrame(raf);
+      if (replayRaf) cancelAnimationFrame(replayRaf);
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
