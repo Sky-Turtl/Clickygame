@@ -898,9 +898,11 @@ function renderGameList() {
             ${esc(opp?.name || "They")} have ${fmtDuration(catchUp.leftMs / 1000)} left to catch up</div>`;
         }
         if (!catchUp.final) {
-          catchUpHtml += `<div class="gc-clinch">
-            ${esc(opp?.name || "They")} win outright with ${fmtDuration(catchUp.theyNeed)} more ·
-            you win outright with ${fmtDuration(catchUp.youNeed)} more</div>`;
+          // Only the leader has a meaningful clinch number — the trailing
+          // side is by definition not yet in a position to lock it in.
+          catchUpHtml += catchUp.forMe
+            ? `<div class="gc-clinch">${esc(opp?.name || "They")} win outright with ${fmtDuration(catchUp.theyNeed)} more</div>`
+            : `<div class="gc-clinch">You win outright with ${fmtDuration(catchUp.youNeed)} more</div>`;
         }
       }
 
