@@ -24,7 +24,6 @@ const SHOT_SPEED = 4.5; // lower = softer max-power shots, more forgiving on a t
 const FRICTION = 0.985;
 const STOP_SPEED = 0.06;
 const WALL_BOUNCE = 0.65; // energy kept off the side rails/obstacles, so it damps out rather than bouncing forever
-const MIN_WALL_BOUNCE_SPEED = 0.7; // floor on the rebound so a near-flush hit still visibly kicks off instead of pinning against it
 const MAX_FRAMES = 900; // ~15s safety cap so a stuck ball can't hang the modal forever
 
 /** Deterministic [0,1) — a tiny local hash, not worth importing util.js's for one cosmetic offset. */
@@ -215,17 +214,17 @@ export function mountGolf(container, seed, round, onDone) {
     // is drawn on every side, so every side should behave like a wall.
     if (ball.x < BALL_R) {
       ball.x = BALL_R;
-      vel.x = Math.max(Math.abs(vel.x) * WALL_BOUNCE, MIN_WALL_BOUNCE_SPEED);
+      vel.x = Math.abs(vel.x) * WALL_BOUNCE;
     } else if (ball.x > W - BALL_R) {
       ball.x = W - BALL_R;
-      vel.x = -Math.max(Math.abs(vel.x) * WALL_BOUNCE, MIN_WALL_BOUNCE_SPEED);
+      vel.x = -Math.abs(vel.x) * WALL_BOUNCE;
     }
     if (ball.y < BALL_R) {
       ball.y = BALL_R;
-      vel.y = Math.max(Math.abs(vel.y) * WALL_BOUNCE, MIN_WALL_BOUNCE_SPEED);
+      vel.y = Math.abs(vel.y) * WALL_BOUNCE;
     } else if (ball.y > H - BALL_R) {
       ball.y = H - BALL_R;
-      vel.y = -Math.max(Math.abs(vel.y) * WALL_BOUNCE, MIN_WALL_BOUNCE_SPEED);
+      vel.y = -Math.abs(vel.y) * WALL_BOUNCE;
     }
 
     // Obstacles bounce the ball the same way the rails do, just off
@@ -242,7 +241,7 @@ export function mountGolf(container, seed, round, onDone) {
       ball.y = o.y + ny * minDist;
       const vn = vel.x * nx + vel.y * ny;
       if (vn < 0) {
-        const bounceSpeed = Math.max(Math.abs(vn) * WALL_BOUNCE, MIN_WALL_BOUNCE_SPEED);
+        const bounceSpeed = Math.abs(vn) * WALL_BOUNCE;
         vel.x += (bounceSpeed - vn) * nx;
         vel.y += (bounceSpeed - vn) * ny;
       }
