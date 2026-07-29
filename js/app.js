@@ -2272,7 +2272,6 @@ function renderDuelModal() {
               iWon ? "the win goes to you." : "they get it."
             }</div>`
           : "";
-        const coinResult = d.game === "coin" ? d.detail?.result : null;
         const restHtml = `
           <div class="rr-throws">${resultDetailHtml(d, meId, oppId, oppName)}</div>
           <div class="rr-verdict ${iWon ? "won" : "lost"}">${iWon ? "You take it" : "You lose it"}</div>
@@ -2284,8 +2283,18 @@ function renderDuelModal() {
           ${timeoutNote}
           ${doubleNote}`;
 
-        if (coinResult) {
-          playCoinFlip(resultEl, coinResult, restHtml);
+        // The initial coin flip already played during the "double_offer" stage
+        // (before the winner was offered take/double). Only the double-or-
+        // nothing gamble is a genuinely new flip that needs its own animation
+        // here — a plain "take" (or a timeout) just shows the same face again.
+        const initialFace = d.game === "coin" ? d.detail?.result : null;
+        if (initialFace && d.doubled) {
+          const secondFace = d.doubleLost ? (initialFace === "heads" ? "tails" : "heads") : initialFace;
+          playCoinFlip(resultEl, secondFace, restHtml);
+        } else if (initialFace) {
+          resultEl.innerHTML = `<div class="coin-flip-stage"><div class="coin-face settle ${initialFace}">${COIN_FACE[initialFace]}</div></div>
+            <div class="coin-outcome ${initialFace}">${initialFace === "heads" ? "Heads" : "Tails"}</div>
+            ${restHtml}`;
         } else {
           resultEl.innerHTML = restHtml;
         }
@@ -2299,20 +2308,27 @@ function renderDuelModal() {
       lockEl.classList.remove("hidden"); // still locked either way — waiting on a pick or a double-or-nothing choice
 
       if (d.status === "double_offer") {
-        // The flip already happened — show it, same visual as the final result.
+        // Play the flip once, then hold the take/double choice back until it
+        // settles — the winner shouldn't see (or be able to click) the offer
+        // while the coin is still spinning.
         resultEl.classList.remove("hidden");
         const resultSig = `${d.id}|${d.status}`;
         if (resultEl.dataset.sig !== resultSig) {
           resultEl.dataset.sig = resultSig;
           const coinResult = d.detail?.result;
           if (coinResult) {
+            card.dataset.coinRevealAt = String(db.now() + COIN_FLIP_MS);
             playCoinFlip(resultEl, coinResult, "");
           } else {
             resultEl.innerHTML = "";
+            delete card.dataset.coinRevealAt;
           }
         }
-        statusEl.textContent =
-          d.winner === meId
+        const revealed = !card.dataset.coinRevealAt || db.now() >= Number(card.dataset.coinRevealAt);
+        pickerEl.classList.toggle("hidden", !revealed);
+        statusEl.textContent = !revealed
+          ? ""
+          : d.winner === meId
             ? "You called it. Bank it, or push your luck?"
             : `${oppName} called it right — deciding whether to take it or go double or nothing.`;
       } else if (!iPicked) {
@@ -2383,9 +2399,10 @@ function pickerHtml(d, iPicked, meId) {
   }
 }
 
-const COIN_FLIP_MS = 3000;
+const COIN_FLIP_MS = 2000;
 const COIN_FLIP_TICK_MS = 110;
 let coinFlipSeq = 0;
+const COIN_FACE = { heads: "👑", tails: "⭐" };
 
 /**
  * Animate a coin flip into `el`: alternates the shown face between heads and
@@ -2397,15 +2414,18 @@ function playCoinFlip(el, finalResult, trailingHtml) {
   const token = String(++coinFlipSeq);
   el.dataset.flipToken = token;
 
-  el.innerHTML = `<div class="coin-flip-stage"><div class="coin-face spin-loop">🪙</div></div>
+  el.innerHTML = `<div class="coin-flip-stage"><div class="coin-face spin-loop heads">${COIN_FACE.heads}</div></div>
     <div class="coin-outcome flipping heads">Heads</div>`;
   const outcomeEl = el.querySelector(".coin-outcome");
+  const faceEl = el.querySelector(".coin-face");
 
   let tick = 0;
   const interval = setInterval(() => {
     if (el.dataset.flipToken !== token) return clearInterval(interval);
     tick++;
     const face = tick % 2 === 0 ? "heads" : "tails";
+    faceEl.textContent = COIN_FACE[face];
+    faceEl.className = `coin-face spin-loop ${face}`;
     outcomeEl.textContent = face === "heads" ? "Heads" : "Tails";
     outcomeEl.className = `coin-outcome flipping ${face}`;
   }, COIN_FLIP_TICK_MS);
@@ -2413,7 +2433,7 @@ function playCoinFlip(el, finalResult, trailingHtml) {
   setTimeout(() => {
     clearInterval(interval);
     if (el.dataset.flipToken !== token) return;
-    el.innerHTML = `<div class="coin-flip-stage"><div class="coin-face settle">🪙</div></div>
+    el.innerHTML = `<div class="coin-flip-stage"><div class="coin-face settle ${finalResult}">${COIN_FACE[finalResult]}</div></div>
       <div class="coin-outcome ${finalResult}">${finalResult === "heads" ? "Heads" : "Tails"}</div>
       ${trailingHtml}`;
   }, COIN_FLIP_MS);
