@@ -2399,7 +2399,7 @@ function pickerHtml(d, iPicked, meId) {
   }
 }
 
-const COIN_FLIP_MS = 2000;
+const COIN_FLIP_MS = 1000;
 const COIN_FLIP_TICK_MS = 110;
 let coinFlipSeq = 0;
 const COIN_FACE = { heads: "👑", tails: "⭐" };
