@@ -115,8 +115,12 @@ export function mountGolf(container, seed, round, onDone) {
   actions.className = "golf-actions hidden";
   actions.innerHTML = `
     <button type="button" class="btn btn-ghost" data-golf="reaim">Re-aim</button>
-    <button type="button" class="btn btn-primary" data-golf="putt">Putt</button>`;
+    <button type="button" class="btn btn-primary" data-golf="putt">Putt</button>
+    <button type="button" class="btn btn-ghost hidden" data-golf="replay">Watch replay</button>`;
   container.appendChild(actions);
+  const replayBtn = actions.querySelector('[data-golf="replay"]');
+  const reaimBtn = actions.querySelector('[data-golf="reaim"]');
+  const puttBtn = actions.querySelector('[data-golf="putt"]');
 
   const ctx = canvas.getContext("2d");
   const ball = { x: tee.x, y: tee.y };
@@ -127,6 +131,9 @@ export function mountGolf(container, seed, round, onDone) {
   let done = false;
   let frame = 0;
   let raf = null;
+  const path = [{ x: ball.x, y: ball.y }]; // every frame of the shot, for the post-shot replay
+  let replayRaf = null;
+  let finalHint = ""; // restored after a replay finishes
 
   function draw() {
     ctx.clearRect(0, 0, W, H);
@@ -220,6 +227,10 @@ export function mountGolf(container, seed, round, onDone) {
       draw();
       return;
     }
+    if (btn.dataset.golf === "replay") {
+      playReplay();
+      return;
+    }
     // Putt: hand the confirmed velocity to the physics sim.
     vel = pending;
     pending = null;
@@ -228,6 +239,37 @@ export function mountGolf(container, seed, round, onDone) {
     raf = requestAnimationFrame(tick);
   }
   actions.addEventListener("click", onAction);
+
+  // Steps back through the recorded shot path so a finished shot can be
+  // watched again — same ball/hole/obstacles, just replaying the motion.
+  // Only the local player's own shot is available to replay for now; a
+  // future version could carry the opponent's recorded path over the wire
+  // the same way and reuse this exact playback.
+  function playReplay() {
+    if (replayRaf) return; // already playing
+    replayBtn.disabled = true;
+    let i = 0;
+    const savedX = ball.x;
+    const savedY = ball.y;
+    hint.textContent = "Replaying your shot…";
+    function step() {
+      if (i >= path.length) {
+        ball.x = savedX;
+        ball.y = savedY;
+        draw();
+        hint.textContent = finalHint;
+        replayBtn.disabled = false;
+        replayRaf = null;
+        return;
+      }
+      ball.x = path[i].x;
+      ball.y = path[i].y;
+      draw();
+      i++;
+      replayRaf = requestAnimationFrame(step);
+    }
+    replayRaf = requestAnimationFrame(step);
+  }
 
   function tick() {
     if (done) return;
@@ -274,6 +316,8 @@ export function mountGolf(container, seed, round, onDone) {
       }
     }
 
+    path.push({ x: ball.x, y: ball.y });
+
     const speed = Math.hypot(vel.x, vel.y);
     const distToHole = Math.hypot(ball.x - hole.x, ball.y - hole.y);
     const sunk = distToHole < SINK_R && speed < 1.6;
@@ -283,7 +327,12 @@ export function mountGolf(container, seed, round, onDone) {
     if (sunk || speed < STOP_SPEED || frame > MAX_FRAMES) {
       done = true;
       const finalDist = sunk ? 0 : distToHole;
-      hint.textContent = sunk ? "🏌️ Sunk it!" : `${Math.round(finalDist)} from the hole.`;
+      finalHint = sunk ? "🏌️ Sunk it!" : `${Math.round(finalDist)} from the hole.`;
+      hint.textContent = finalHint;
+      reaimBtn.classList.add("hidden");
+      puttBtn.classList.add("hidden");
+      replayBtn.classList.remove("hidden");
+      actions.classList.remove("hidden");
       onDone(finalDist);
       return;
     }
@@ -295,6 +344,7 @@ export function mountGolf(container, seed, round, onDone) {
   return {
     destroy() {
       if (raf) cancelAnimationFrame(raf);
+      if (replayRaf) cancelAnimationFrame(replayRaf);
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);
