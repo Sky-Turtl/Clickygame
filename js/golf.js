@@ -2,10 +2,10 @@
 //
 // Mounts a small canvas into a container and runs a drag-back-and-release
 // physics sim. Pointer Events unify mouse and touch input, so the same code
-// path drives it on desktop and phones. One shot per player: once the ball
-// stops (or leaves the green, or sinks), the final distance from the hole is
-// reported via `onDone` — the caller submits that as this player's pick, same
-// as any other duel minigame.
+// path drives it on desktop and phones. One shot per player: the ball bounces
+// off all four rails, so once it stops (or sinks), the final distance from
+// the hole is reported via `onDone` — the caller submits that as this
+// player's pick, same as any other duel minigame.
 //
 // Both players get the same hole position (and, from round 2 on, the same
 // obstacles) derived from the duel id, so there's nothing to store — same
@@ -211,14 +211,21 @@ export function mountGolf(container, seed, round, onDone) {
     vel.x *= FRICTION;
     vel.y *= FRICTION;
 
-    // The side rails bounce the ball back onto the green instead of losing
-    // it — only the near/far ends (past the tee, past the hole) end the shot.
+    // All four rails bounce the ball back onto the green — the canvas border
+    // is drawn on every side, so every side should behave like a wall.
     if (ball.x < BALL_R) {
       ball.x = BALL_R;
       vel.x = Math.max(Math.abs(vel.x) * WALL_BOUNCE, MIN_WALL_BOUNCE_SPEED);
     } else if (ball.x > W - BALL_R) {
       ball.x = W - BALL_R;
       vel.x = -Math.max(Math.abs(vel.x) * WALL_BOUNCE, MIN_WALL_BOUNCE_SPEED);
+    }
+    if (ball.y < BALL_R) {
+      ball.y = BALL_R;
+      vel.y = Math.max(Math.abs(vel.y) * WALL_BOUNCE, MIN_WALL_BOUNCE_SPEED);
+    } else if (ball.y > H - BALL_R) {
+      ball.y = H - BALL_R;
+      vel.y = -Math.max(Math.abs(vel.y) * WALL_BOUNCE, MIN_WALL_BOUNCE_SPEED);
     }
 
     // Obstacles bounce the ball the same way the rails do, just off
@@ -241,16 +248,15 @@ export function mountGolf(container, seed, round, onDone) {
       }
     }
 
-    const outOfBounds = ball.y < -20 || ball.y > H + 20;
     const speed = Math.hypot(vel.x, vel.y);
     const distToHole = Math.hypot(ball.x - hole.x, ball.y - hole.y);
     const sunk = distToHole < SINK_R && speed < 1.6;
 
     draw();
 
-    if (sunk || outOfBounds || speed < STOP_SPEED || frame > MAX_FRAMES) {
+    if (sunk || speed < STOP_SPEED || frame > MAX_FRAMES) {
       done = true;
-      const finalDist = outOfBounds ? Math.max(distToHole, 120) : sunk ? 0 : distToHole;
+      const finalDist = sunk ? 0 : distToHole;
       hint.textContent = sunk ? "🏌️ Sunk it!" : `${Math.round(finalDist)} from the hole.`;
       onDone(finalDist);
       return;
