@@ -434,7 +434,7 @@ function botPickFor(duel) {
     case "dice":
       return true; // no real "choice" for this one — just needs to be present
     case "golf":
-      return Math.random() * 70; // a plausible miss distance
+      return 0; // always sinks — forces ties/replays so obstacle rounds are easy to test
     default: {
       const opts = ["rock", "paper", "scissors"];
       return opts[Math.floor(Math.random() * 3)];
