@@ -2255,7 +2255,6 @@ function renderDuelModal() {
               iWon ? "the win goes to you." : "they get it."
             }</div>`
           : "";
-        const coinResult = d.game === "coin" ? d.detail?.result : null;
         const restHtml = `
           <div class="rr-throws">${resultDetailHtml(d, meId, oppId, oppName)}</div>
           <div class="rr-verdict ${iWon ? "won" : "lost"}">${iWon ? "You take it" : "You lose it"}</div>
@@ -2267,8 +2266,18 @@ function renderDuelModal() {
           ${timeoutNote}
           ${doubleNote}`;
 
-        if (coinResult) {
-          playCoinFlip(resultEl, coinResult, restHtml);
+        // The initial coin flip already played during the "double_offer" stage
+        // (before the winner was offered take/double). Only the double-or-
+        // nothing gamble is a genuinely new flip that needs its own animation
+        // here — a plain "take" (or a timeout) just shows the same face again.
+        const initialFace = d.game === "coin" ? d.detail?.result : null;
+        if (initialFace && d.doubled) {
+          const secondFace = d.doubleLost ? (initialFace === "heads" ? "tails" : "heads") : initialFace;
+          playCoinFlip(resultEl, secondFace, restHtml);
+        } else if (initialFace) {
+          resultEl.innerHTML = `<div class="coin-flip-stage"><div class="coin-face settle ${initialFace}">${COIN_FACE[initialFace]}</div></div>
+            <div class="coin-outcome ${initialFace}">${initialFace === "heads" ? "Heads" : "Tails"}</div>
+            ${restHtml}`;
         } else {
           resultEl.innerHTML = restHtml;
         }
@@ -2282,20 +2291,27 @@ function renderDuelModal() {
       lockEl.classList.remove("hidden"); // still locked either way — waiting on a pick or a double-or-nothing choice
 
       if (d.status === "double_offer") {
-        // The flip already happened — show it, same visual as the final result.
+        // Play the flip once, then hold the take/double choice back until it
+        // settles — the winner shouldn't see (or be able to click) the offer
+        // while the coin is still spinning.
         resultEl.classList.remove("hidden");
         const resultSig = `${d.id}|${d.status}`;
         if (resultEl.dataset.sig !== resultSig) {
           resultEl.dataset.sig = resultSig;
           const coinResult = d.detail?.result;
           if (coinResult) {
+            card.dataset.coinRevealAt = String(db.now() + COIN_FLIP_MS);
             playCoinFlip(resultEl, coinResult, "");
           } else {
             resultEl.innerHTML = "";
+            delete card.dataset.coinRevealAt;
           }
         }
-        statusEl.textContent =
-          d.winner === meId
+        const revealed = !card.dataset.coinRevealAt || db.now() >= Number(card.dataset.coinRevealAt);
+        pickerEl.classList.toggle("hidden", !revealed);
+        statusEl.textContent = !revealed
+          ? ""
+          : d.winner === meId
             ? "You called it. Bank it, or push your luck?"
             : `${oppName} called it right — deciding whether to take it or go double or nothing.`;
       } else if (!iPicked) {
