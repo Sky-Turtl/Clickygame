@@ -30,7 +30,7 @@ import {
   utcDayKey,
   utcHourToLocalRange,
 } from "./util.js";
-import { BUCKETS, bucketOHLC, claimRows, groupRuns, sortRows } from "./series.js";
+import { BUCKETS, bucketOHLC, claimRows, groupRuns, sortRows, suggestBucket } from "./series.js";
 import { barChart, candleChart, leadArea, legend } from "./charts.js";
 import { buildExport, countdownToClaims, parseImport } from "./importer.js";
 import { mountGolf } from "./golf.js";
@@ -87,6 +87,8 @@ let lastClaimIds = new Map(); // code -> last claim id we've already put in the 
 let clickSort = store.get("clickSort", "time"); // "time" | "size"
 let leadStyle = store.get("leadStyle", "area"); // "area" | "candle"
 let bucketKey = store.get("bucketKey", "1h");
+/** Click-to-zoom on the "who's winning" chart: {start, end} in ms, or null for the full view. */
+let leadZoom = null;
 
 // --- Boot -------------------------------------------------------------------
 
@@ -1334,8 +1336,27 @@ function renderCharts(list, single) {
   setHTML("chart-clicks", barChart(rows, { width, meName, oppName }));
 
   // --- who's winning ---
-  const bucket = BUCKETS.find((b) => b.key === bucketKey) || BUCKETS[2];
-  const buckets = bucketOHLC(merged, "__me__", bucket.ms, db.now());
+  let buckets;
+  let bucketLabel;
+  if (leadZoom) {
+    const zb = suggestBucket(leadZoom.end - leadZoom.start);
+    buckets = bucketOHLC(merged, "__me__", zb.ms, leadZoom.end, 200).filter((b) => b.t1 > leadZoom.start);
+    bucketLabel = zb.label;
+  } else {
+    const bucket = BUCKETS.find((b) => b.key === bucketKey) || BUCKETS[2];
+    buckets = bucketOHLC(merged, "__me__", bucket.ms, db.now());
+    bucketLabel = bucket.label;
+  }
+
+  $("btn-lead-zoom-reset").classList.toggle("hidden", !leadZoom);
+  $("bucket-size").disabled = !!leadZoom;
+  $("chart-lead-zoom-note").classList.toggle("hidden", !leadZoom);
+  if (leadZoom) {
+    setHTML(
+      "chart-lead-zoom-note",
+      `🔍 Zoomed into ${new Date(leadZoom.start).toLocaleString()} → ${new Date(leadZoom.end).toLocaleString()}.`
+    );
+  }
 
   setHTML("chart-lead-legend", buckets.length ? legend(meName, oppName) : "");
   setHTML(
@@ -1349,12 +1370,12 @@ function renderCharts(list, single) {
   const note = !last
     ? ""
     : leadStyle === "candle"
-      ? `Each candle is one ${bucket.label.toLowerCase()}: body spans the lead at the ` +
-        `start and end, wick spans its high and low within that ${bucket.label.toLowerCase()}. ` +
-        `Blue means your lead grew.`
+      ? `Each candle is one ${bucketLabel.toLowerCase()}: body spans the lead at the ` +
+        `start and end, wick spans its high and low within that ${bucketLabel.toLowerCase()}. ` +
+        `Blue means your lead grew. Tap a candle to zoom in.`
       : `Above the dashed line ${esc(meName)} is ahead; below it ${esc(oppName)} ${
           opp.real ? "is" : "are"
-        }.`;
+        }. Tap a point to zoom in.`;
   setHTML("chart-lead-note", note);
 }
 
@@ -1771,7 +1792,10 @@ function wireHub() {
   $("brand-logo").addEventListener("click", () => {
     if (roster.length) goHome();
   });
-  $("stats-scope").addEventListener("change", renderHubStats);
+  $("stats-scope").addEventListener("change", () => {
+    leadZoom = null; // a different game/scope is a different dataset — start unzoomed
+    renderHubStats();
+  });
 
   // Chart controls. Each persists, so the view you left is the view you return to.
   document.querySelectorAll("[data-clicksort]").forEach((b) =>
@@ -1797,6 +1821,21 @@ function wireHub() {
   $("bucket-size").addEventListener("change", (e) => {
     bucketKey = e.target.value;
     store.set("bucketKey", bucketKey);
+    renderHubStats();
+  });
+
+  // Click/tap a candle or point on the "who's winning" chart to zoom into it.
+  $("chart-lead").addEventListener("click", (e) => {
+    const target = e.target.closest(".chart-zoom-target");
+    if (!target) return;
+    const start = Number(target.dataset.t0);
+    const end = Number(target.dataset.t1);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return;
+    leadZoom = { start, end };
+    renderHubStats();
+  });
+  $("btn-lead-zoom-reset").addEventListener("click", () => {
+    leadZoom = null;
     renderHubStats();
   });
 

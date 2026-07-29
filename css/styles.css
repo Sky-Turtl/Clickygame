@@ -673,6 +673,7 @@ input[type=date] { color-scheme: dark; }
 .chart-svg { display: block; width: 100%; }
 .chart-svg .bar { transition: opacity .12s; }
 .chart-svg .bar:hover, .chart-svg .candle:hover { opacity: .75; }
+.chart-zoom-target { cursor: pointer; }
 
 .chart-empty {
   padding: 34px 10px;

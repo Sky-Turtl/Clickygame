@@ -148,14 +148,15 @@ export function leadArea(buckets, { width = 640, height = 210, meName, oppName }
   out += `<path d="${line}" fill="none" stroke="${C.mine}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" clip-path="url(#clipUp)"/>`;
   out += `<path d="${line}" fill="none" stroke="${C.theirs}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" clip-path="url(#clipDn)"/>`;
 
-  // Invisible hit targets, wider than the marks
+  // Invisible hit targets, wider than the marks — also the click-to-zoom targets.
   buckets.forEach((b, i) => {
     const lead = b.close;
     const who = lead > 0 ? `${meName} ahead` : lead < 0 ? `${oppName} ahead` : "level";
     out +=
-      `<rect x="${(x(i) - plotW / buckets.length / 2).toFixed(2)}" y="${PAD.top}" ` +
+      `<rect class="chart-zoom-target" data-t0="${b.t0}" data-t1="${b.t1}" ` +
+      `x="${(x(i) - plotW / buckets.length / 2).toFixed(2)}" y="${PAD.top}" ` +
       `width="${(plotW / buckets.length).toFixed(2)}" height="${plotH}" fill="transparent">` +
-      `<title>${esc(`${fmtTime(b.t0)} — ${who} by ${fmtDuration(Math.abs(lead))}`)}</title></rect>`;
+      `<title>${esc(`${fmtTime(b.t0)} — ${who} by ${fmtDuration(Math.abs(lead))} — tap to zoom in`)}</title></rect>`;
   });
 
   out += axisTimeLabels(buckets, x, h);
@@ -216,7 +217,7 @@ export function candleChart(buckets, { width = 640, height = 210, meName, oppNam
       `range ${sign(b.low)} … ${sign(b.high)}\n` +
       `${b.count} claim${b.count === 1 ? "" : "s"}`;
 
-    out += `<g class="candle"><title>${esc(tip)}</title>`;
+    out += `<g class="candle chart-zoom-target" data-t0="${b.t0}" data-t1="${b.t1}"><title>${esc(tip + "\ntap to zoom in")}</title>`;
     out += `<line x1="${cx.toFixed(2)}" y1="${y(b.high).toFixed(2)}" x2="${cx.toFixed(2)}" y2="${y(b.low).toFixed(2)}" stroke="${col}" stroke-width="1.5"/>`;
     out += `<rect x="${(cx - bodyW / 2).toFixed(2)}" y="${top.toFixed(2)}" width="${bodyW.toFixed(2)}" height="${bh.toFixed(2)}" rx="1.5" fill="${col}"/>`;
     // Hit target wider than the mark
