@@ -220,6 +220,7 @@ export function applySettle(duel, ctx) {
       round: drawnRound + 1,
       lastDraw: { round: drawnRound, detail },
       picks: null,
+      golfPaths: null, // last round's recorded shots don't carry into the replay round
       roundStartAt: ctx.at,
     };
     if (duel.game === "reaction") {
@@ -295,10 +296,21 @@ export function applyDoubleChoice(duel, ctx) {
   };
 }
 
-/** Record a player's pick (a throw, a guess, a tap timestamp — whatever the game calls for). */
-export function applyThrow(duel, { duelId, playerId, choice }) {
+/**
+ * Record a player's pick (a throw, a guess, a tap timestamp — whatever the game calls for).
+ *
+ * @param path golf-only: the recorded {x,y}[] frames of that shot, kept alongside
+ *             the numeric distance (which is what `picks` — and resolveGame's
+ *             comparison — actually uses) so both players can later watch each
+ *             other's actual shot, not just their own.
+ */
+export function applyThrow(duel, { duelId, playerId, choice, path }) {
   if (!duel || duel.id !== duelId || duel.status !== "open") return undefined;
-  return { ...duel, picks: { ...(duel.picks || {}), [playerId]: choice } };
+  const next = { ...duel, picks: { ...(duel.picks || {}), [playerId]: choice } };
+  if (duel.game === "golf" && path) {
+    next.golfPaths = { ...(duel.golfPaths || {}), [playerId]: path };
+  }
+  return next;
 }
 
 /**

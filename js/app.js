@@ -2004,10 +2004,6 @@ function wireHub() {
 // --- Duel modals (one per active duel) --------------------------------------
 
 const dismissedResults = new Set();
-// duel id -> the recorded path of my own golf shot, kept client-side just so
-// the result screen's "Watch replay" has something to play back. There's no
-// wire format yet for the opponent's actual shot, so this stands in for it.
-const golfShotPaths = new Map();
 
 /** All duels I'm involved in that should have a visible modal. */
 function allActiveDuels() {
@@ -2149,12 +2145,12 @@ function renderDuelModal() {
       // markup inside gets rebuilt on every render, but delegation means the
       // listener itself never needs rewiring.
       const pickerEl = card.querySelector('[data-el="picker"]');
-      const submitPick = async (value) => {
+      const submitPick = async (value, path) => {
         const cur = games.get(g.code);
         const curDuel = cur?.state?.duel;
         if (!curDuel || curDuel.id !== d.id) return;
         pickerEl.querySelectorAll("button").forEach((b) => (b.disabled = true));
-        await db.submitThrow(g.code, curDuel.id, myId(g), value);
+        await db.submitThrow(g.code, curDuel.id, myId(g), value, path);
         render();
       };
       // Exposed so the golf mount (outside this closure, in the main render
@@ -2204,7 +2200,6 @@ function renderDuelModal() {
         const cur = games.get(g.code);
         const curDuel = cur?.state?.duel;
         if (curDuel?.status === "resolved") dismissedResults.add(curDuel.id);
-        golfShotPaths.delete(curDuel?.id);
         card.remove();
         updateDuelCounter(overlay);
         render();
@@ -2245,8 +2240,7 @@ function renderDuelModal() {
           const mount = pickerEl.querySelector(".golf-mount");
           if (mount)
             mountGolf(mount, d.id, d.round || 1, (distance, path) => {
-              golfShotPaths.set(d.id, path);
-              card._submitPick(distance);
+              card._submitPick(distance, path);
             });
         }
       }
@@ -2281,10 +2275,11 @@ function renderDuelModal() {
               iWon ? "the win goes to you." : "they get it."
             }</div>`
           : "";
-        const golfPath = d.game === "golf" ? golfShotPaths.get(d.id) : null;
-        const golfReplayHtml = golfPath
-          ? `<div class="golf-replay" data-el="golf-replay"></div>`
-          : "";
+        const golfPaths = d.game === "golf" ? d.golfPaths || {} : null;
+        const myGolfPath = golfPaths?.[meId];
+        const oppGolfPath = golfPaths?.[oppId];
+        const golfReplayHtml =
+          myGolfPath || oppGolfPath ? `<div class="golf-replay" data-el="golf-replay"></div>` : "";
         const restHtml = `
           <div class="rr-throws">${resultDetailHtml(d, meId, oppId, oppName)}</div>
           <div class="rr-verdict ${iWon ? "won" : "lost"}">${iWon ? "You take it" : "You lose it"}</div>
@@ -2313,11 +2308,10 @@ function renderDuelModal() {
           resultEl.innerHTML = restHtml;
         }
 
-        if (golfPath) {
+        if (myGolfPath || oppGolfPath) {
           const mount = resultEl.querySelector('[data-el="golf-replay"]');
-          // Not the opponent's actual shot — there's no syncing for that yet
-          // — but it plays back on the same course, standing in until then.
-          if (mount) mountGolfReplay(mount, d.id, d.round || 1, golfPath);
+          if (mount)
+            mountGolfReplay(mount, d.id, d.round || 1, { mine: myGolfPath, opponent: oppGolfPath }, oppName);
         }
       }
 
