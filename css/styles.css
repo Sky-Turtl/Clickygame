@@ -494,8 +494,9 @@ input[type=date] { color-scheme: dark; }
 .duel-game {
   font-size: 12px; color: var(--text-faint);
   text-transform: uppercase; letter-spacing: .1em;
-  margin: -4px 0 12px;
+  margin: -4px 0 4px;
 }
+.duel-minigame { font-size: 13px; font-weight: 600; margin: 0 0 12px; }
 
 /* ---------- Scores ---------- */
 
@@ -772,11 +773,53 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-
 .throw.picked { border-color: var(--accent); background: rgba(109,139,255,.14); }
 .throw:disabled { opacity: .4; cursor: not-allowed; transform: none; }
 
+.duel-picker.hidden { display: none; }
+
+.duel-locked {
+  text-align: center;
+  padding: 16px 6px;
+  color: var(--text-dim);
+  font-size: 13.5px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.duel-locked.bad { color: var(--red); }
+
+.duel-tap {
+  display: block;
+  width: 100%;
+  padding: 22px 6px;
+  border-radius: 12px;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 700;
+}
+.duel-tap.wait { cursor: default; }
+.duel-tap.go { background: var(--green); color: #06140e; box-shadow: 0 0 24px rgba(61,220,151,.4); }
+
+.duel-number { display: flex; gap: 8px; }
+.duel-number-input {
+  flex: 1;
+  min-width: 0;
+  padding: 12px 13px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--text);
+  font: inherit;
+  font-size: 16px;
+  text-align: center;
+}
+.duel-number-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+.duel-number-input.bad { border-color: var(--red); }
+.duel-number button { flex: none; }
+
 .modal-status { font-size: 13.5px; color: var(--text-dim); text-align: center; margin: 16px 0 0; min-height: 20px; }
 .modal-lock { font-size: 12px; color: var(--text-faint); text-align: center; margin: 14px 0 0; }
 
 .rps-result { text-align: center; margin-top: 16px; }
-.rps-result .rr-throws { font-size: 34px; letter-spacing: .12em; }
+.rps-result .rr-throws { font-size: 20px; line-height: 1.4; }
 .rps-result .rr-verdict { font-size: 17px; font-weight: 700; margin-top: 8px; }
 .rps-result .rr-verdict.won { color: var(--green); }
 .rps-result .rr-verdict.lost { color: var(--red); }

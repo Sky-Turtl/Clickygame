@@ -269,13 +269,42 @@ export async function claimAnnouncement(code, eventKey) {
 
 // --- Bot opponent -----------------------------------------------------------
 
+function botPickFor(duel) {
+  switch (duel.game) {
+    case "closest":
+      return Math.floor(Math.random() * 101);
+    case "coin":
+    case "dice":
+      return true; // no real "choice" for these — just needs to be present
+    default: {
+      const opts = ["rock", "paper", "scissors"];
+      return opts[Math.floor(Math.random() * 3)];
+    }
+  }
+}
+
 function scheduleBotThrow(code, duelId) {
+  const duel = g(code).state.duel;
+  if (!duel) return;
+
+  // Reaction needs the bot to wait for "go" and then react with some
+  // human-ish lag, not just fire on a flat random timer like the other games.
+  if (duel.game === "reaction") {
+    const wait = Math.max(0, duel.goAt - now()) + 150 + Math.random() * 400;
+    setTimeout(() => {
+      const cur = g(code).state.duel;
+      if (cur?.id !== duelId || cur.status !== "open") return;
+      if ((cur.picks || {})[BOT] !== undefined) return;
+      submitThrow(code, duelId, BOT, now());
+    }, wait);
+    return;
+  }
+
   setTimeout(() => {
-    const game = g(code);
-    if (game.state.duel?.id !== duelId || game.state.duel.status !== "open") return;
-    if ((game.state.duel.picks || {})[BOT]) return;
-    const opts = ["rock", "paper", "scissors"];
-    submitThrow(code, duelId, BOT, opts[Math.floor(Math.random() * 3)]);
+    const cur = g(code).state.duel;
+    if (cur?.id !== duelId || cur.status !== "open") return;
+    if ((cur.picks || {})[BOT]) return;
+    submitThrow(code, duelId, BOT, botPickFor(cur));
   }, 1200 + Math.random() * 1500);
 }
 

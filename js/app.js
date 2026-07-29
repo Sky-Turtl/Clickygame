@@ -8,8 +8,10 @@ import {
 } from "./config.js";
 import * as discord from "./discord.js";
 import {
+  DUEL_META,
   PERIODS,
   THROW_EMOJI,
+  THROWS,
   doubleHoursFor,
   maxClaimable,
   multiplierAt,
@@ -516,12 +518,13 @@ function openDuelFor(g) {
   return d;
 }
 
-/** Duels I'm in that I haven't thrown for yet — these block the claim button. */
+/** Duels I'm in that I haven't picked for yet — these block the claim button. */
 function pendingThrows() {
   const out = [];
   for (const g of games.values()) {
     const d = openDuelFor(g);
-    if (d && !(d.picks || {})[myId(g)]) out.push({ g, duel: d });
+    const mine = d && (d.picks || {})[myId(g)];
+    if (d && mine === undefined) out.push({ g, duel: d });
   }
   return out;
 }
@@ -654,8 +657,8 @@ function onStateChange(g) {
     if (d.challenger === myId(g) || d.defender === myId(g)) openDuelModal();
   }
 
-  // Both throws are in — race to settle it. The transaction picks one winner.
-  if (d.status === "open" && d.picks && d.picks[d.challenger] && d.picks[d.defender]) {
+  // Both picks are in — race to settle it. The transaction picks one winner.
+  if (d.status === "open" && d.picks?.[d.challenger] !== undefined && d.picks?.[d.defender] !== undefined) {
     // Settle it, but say nothing to Discord — the result belongs in the app, so
     // neither of you learns who won from a phone notification.
     db.trySettleDuel(g.code, d.id);
@@ -765,9 +768,9 @@ function renderHub() {
 
   if (blocked.length) {
     btn.disabled = false;
-    btn.querySelector(".btn-claim-text").textContent = "THROW TO CONTINUE";
+    btn.querySelector(".btn-claim-text").textContent = "DUEL TO CONTINUE";
     $("btn-claim-sub").textContent = `${blocked.length} duel${blocked.length > 1 ? "s" : ""} waiting on you`;
-    note.textContent = "Claiming is locked until you've picked rock, paper or scissors.";
+    note.textContent = "Claiming is locked until you've made your move in the duel.";
   } else if (!targets.length && cooling.length) {
     // Nothing to claim into only because the cooldown is still running.
     const left = Math.max(...cooling.map(cooldownLeft));
@@ -1607,34 +1610,53 @@ function renderDuelModal() {
         <div class="modal" role="dialog" aria-modal="true">
           <h2>⚔️ Contested claim</h2>
           <p class="duel-game" data-el="game"></p>
+          <p class="duel-minigame" data-el="minigame"></p>
           <p class="modal-sub" data-el="sub"></p>
           <div class="pot" data-el="pot"></div>
-          <div class="throws" data-el="throws">
-            <button class="throw" data-throw="rock"><span>🪨</span>Rock</button>
-            <button class="throw" data-throw="paper"><span>📄</span>Paper</button>
-            <button class="throw" data-throw="scissors"><span>✂️</span>Scissors</button>
-          </div>
+          <div class="duel-picker" data-el="picker"></div>
           <p class="modal-status" data-el="status"></p>
           <div class="rps-result hidden" data-el="result"></div>
           <div class="modal-actions">
             <div class="spacer"></div>
             <button type="button" class="btn btn-ghost hidden" data-el="dismiss">Close</button>
           </div>
-          <p class="modal-lock" data-el="lock">You can't claim again until you've thrown.</p>
+          <p class="modal-lock" data-el="lock">You can't claim again until you've made your move.</p>
         </div>`;
       host.appendChild(modal);
 
-      // Wire throw buttons for this modal.
-      const throwsEl = modal.querySelector('[data-el="throws"]');
-      throwsEl.addEventListener("click", async (e) => {
-        const btn = e.target.closest(".throw");
-        if (!btn || btn.disabled) return;
+      // Wire the picker once and read live duel state at click time — the
+      // markup inside gets rebuilt on every render, but delegation means the
+      // listener itself never needs rewiring.
+      const pickerEl = modal.querySelector('[data-el="picker"]');
+      const submitPick = async (value) => {
         const cur = games.get(g.code);
         const curDuel = cur?.state?.duel;
         if (!curDuel || curDuel.id !== d.id) return;
-        btn.disabled = true;
-        await db.submitThrow(g.code, d.id, myId(g), btn.dataset.throw);
+        pickerEl.querySelectorAll("button").forEach((b) => (b.disabled = true));
+        await db.submitThrow(g.code, curDuel.id, myId(g), value);
         render();
+      };
+      pickerEl.addEventListener("click", (e) => {
+        const numBtn = e.target.closest('[data-pick-btn="closest"]');
+        if (numBtn) {
+          const input = pickerEl.querySelector(".duel-number-input");
+          const val = Math.round(Number(input?.value));
+          if (!Number.isFinite(val) || val < 0 || val > 100) {
+            input?.classList.add("bad");
+            return;
+          }
+          submitPick(val);
+          return;
+        }
+        const btn = e.target.closest("[data-pick]");
+        if (!btn || btn.disabled) return;
+        const kind = btn.dataset.pick;
+        submitPick(kind === "tap" ? db.now() : kind === "flip" || kind === "roll" ? true : kind);
+      });
+      pickerEl.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" || !e.target.classList?.contains("duel-number-input")) return;
+        e.preventDefault();
+        pickerEl.querySelector('[data-pick-btn="closest"]')?.click();
       });
 
       // Wire dismiss button.
@@ -1648,24 +1670,31 @@ function renderDuelModal() {
     }
 
     const el = (name) => modal.querySelector(`[data-el="${name}"]`);
+    const meId = myId(g);
+    const iPicked = myPick !== undefined && myPick !== null;
+    const theyPicked = oppPick !== undefined && oppPick !== null;
+    const meta = DUEL_META[d.game] || DUEL_META.rps;
 
     el("game").textContent = gameLabel(g);
+    el("minigame").textContent = `${meta.icon} ${meta.label}`;
     el("sub").innerHTML = resolved
       ? ""
       : `<strong>${esc(oppName)}</strong> and you claimed within ` +
-        `${(d.gapMs / 1000).toFixed(1)}s of each other. Rock paper scissors, best of one — ` +
-        `winner takes the whole pot.`;
+        `${(d.gapMs / 1000).toFixed(1)}s of each other. ${esc(meta.rule)}`;
 
     el("pot").innerHTML = `<div class="pot-label">In escrow${d.round > 1 ? ` · round ${d.round}` : ""}</div>
       <div class="pot-value">${fmtDuration(d.potSeconds)}</div>`;
 
-    // Throw buttons
-    const throwsEl = el("throws");
-    throwsEl.classList.toggle("hidden", resolved);
-    throwsEl.querySelectorAll(".throw").forEach((b) => {
-      b.disabled = !!myPick || resolved;
-      b.classList.toggle("picked", myPick === b.dataset.throw);
-    });
+    // Picker
+    const pickerEl = el("picker");
+    pickerEl.classList.toggle("hidden", resolved);
+    if (!resolved) {
+      const sig = `${d.game}|${iPicked}|${d.game === "reaction" ? db.now() >= d.goAt : ""}`;
+      if (pickerEl.dataset.sig !== sig) {
+        pickerEl.dataset.sig = sig;
+        pickerEl.innerHTML = pickerHtml(d, iPicked);
+      }
+    }
 
     // Status + result
     const statusEl = el("status");
@@ -1674,12 +1703,11 @@ function renderDuelModal() {
     const lockEl = el("lock");
 
     if (resolved) {
-      const iWon = d.winner === myId(g);
-      const picks = d.finalPicks || {};
+      const iWon = d.winner === meId;
       statusEl.textContent = "";
       resultEl.classList.remove("hidden");
       resultEl.innerHTML = `
-        <div class="rr-throws">${THROW_EMOJI[picks[myId(g)]] || "?"} vs ${THROW_EMOJI[picks[oppId]] || "?"}</div>
+        <div class="rr-throws">${resultDetailHtml(d, meId, oppId, oppName)}</div>
         <div class="rr-verdict ${iWon ? "won" : "lost"}">${iWon ? "You take it" : "You lose it"}</div>
         <div class="rr-detail">${
           iWon
@@ -1691,13 +1719,73 @@ function renderDuelModal() {
     } else {
       resultEl.classList.add("hidden");
       dismissEl.classList.add("hidden");
-      lockEl.classList.toggle("hidden", !!myPick);
-      if (!myPick) {
-        statusEl.textContent = oppPick ? `${oppName} has thrown. Your move.` : "Pick your throw.";
+      lockEl.classList.toggle("hidden", iPicked);
+      if (!iPicked) {
+        statusEl.textContent = theyPicked ? `${oppName} has moved. Your turn.` : "Make your move.";
       } else {
-        statusEl.textContent = `Locked in ${THROW_EMOJI[myPick]}. Waiting for ${oppName}…`;
+        statusEl.textContent = `Locked in. Waiting for ${oppName}…`;
       }
     }
+  }
+}
+
+/** Markup for whatever's needed to make a pick in this duel's minigame. */
+function pickerHtml(d, iPicked) {
+  if (iPicked) return `<div class="duel-locked">Locked in. Waiting for the other side…</div>`;
+
+  switch (d.game) {
+    case "closest":
+      return `<div class="duel-number">
+        <input type="number" min="0" max="100" step="1" class="duel-number-input" placeholder="0-100" inputmode="numeric">
+        <button type="button" class="btn btn-primary" data-pick-btn="closest">Guess</button>
+      </div>`;
+    case "coin":
+      return `<button type="button" class="btn btn-primary duel-tap" data-pick="flip">🪙 Flip the coin</button>`;
+    case "dice":
+      return `<button type="button" class="btn btn-primary duel-tap" data-pick="roll">🎲 Roll the die</button>`;
+    case "reaction": {
+      const ready = db.now() >= d.goAt;
+      return ready
+        ? `<button type="button" class="btn btn-primary duel-tap go" data-pick="tap">TAP NOW!</button>`
+        : `<button type="button" class="btn btn-ghost duel-tap wait" data-pick="tap">Wait for it…</button>`;
+    }
+    case "rps":
+    default:
+      return `<div class="throws">${THROWS.map(
+        (t) => `<button class="throw" data-pick="${t}"><span>${THROW_EMOJI[t]}</span>${t[0].toUpperCase()}${t.slice(1)}</button>`
+      ).join("")}</div>`;
+  }
+}
+
+/** The "X vs Y" line on the result screen, tailored to whichever minigame decided it. */
+function resultDetailHtml(d, meId, oppId, oppName) {
+  const picks = d.finalPicks || {};
+  const detail = d.detail || {};
+  const mineIsChallenger = d.challenger === meId;
+
+  switch (d.game) {
+    case "closest":
+      return `You guessed ${esc(String(picks[meId]))} · ${esc(oppName)} guessed ${esc(
+        String(picks[oppId])
+      )} · target was ${detail.target}`;
+    case "coin":
+      return `🪙 Landed on ${detail.flip === "heads" ? "heads" : "tails"}`;
+    case "dice": {
+      const mine = mineIsChallenger ? detail.rollA : detail.rollB;
+      const theirs = mineIsChallenger ? detail.rollB : detail.rollA;
+      return `🎲 You rolled ${mine} · ${esc(oppName)} rolled ${theirs}`;
+    }
+    case "reaction": {
+      const mineFalse = mineIsChallenger ? detail.falseStartA : detail.falseStartB;
+      const mineLatency = mineIsChallenger ? detail.latencyA : detail.latencyB;
+      const theirsFalse = mineIsChallenger ? detail.falseStartB : detail.falseStartA;
+      const theirsLatency = mineIsChallenger ? detail.latencyB : detail.latencyA;
+      const fmtL = (falseStart, ms) => (falseStart ? "false start" : `${Math.max(0, Math.round(ms))}ms`);
+      return `You: ${fmtL(mineFalse, mineLatency)} · ${esc(oppName)}: ${fmtL(theirsFalse, theirsLatency)}`;
+    }
+    case "rps":
+    default:
+      return `${THROW_EMOJI[picks[meId]] || "?"} vs ${THROW_EMOJI[picks[oppId]] || "?"}`;
   }
 }
 

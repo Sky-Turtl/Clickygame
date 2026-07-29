@@ -88,6 +88,37 @@ export function rps(a, b) {
   return wins[a] === b ? 1 : -1;
 }
 
+// --- Duel minigames (display only — see engine.js for the rules themselves) -
+
+/** Keys match `engine.DUEL_GAMES`, kept separate to avoid a circular import. */
+export const DUEL_META = {
+  rps: {
+    label: "Rock Paper Scissors",
+    icon: "✊",
+    rule: "Best of one. Rock beats scissors, scissors beats paper, paper beats rock.",
+  },
+  closest: {
+    label: "Closest guess",
+    icon: "🎯",
+    rule: "Guess a number from 0–100. Whoever's closest to the secret target wins.",
+  },
+  coin: {
+    label: "Coin flip",
+    icon: "🪙",
+    rule: "Pure chance — tap to flip. Winner takes the whole pot.",
+  },
+  dice: {
+    label: "Dice roll",
+    icon: "🎲",
+    rule: "Roll a die each. Higher roll wins; a tie rolls again.",
+  },
+  reaction: {
+    label: "Reaction test",
+    icon: "⚡",
+    rule: "Wait for GO, then tap as fast as you can. Jumping the gun loses outright.",
+  },
+};
+
 // --- Catch-up math -----------------------------------------------------------
 
 /**
