@@ -35,6 +35,7 @@ import { BUCKETS, bucketOHLC, claimRows, groupRuns, sortRows, suggestBucket } fr
 import { barChart, candleChart, leadArea, legend } from "./charts.js";
 import { buildExport, countdownToClaims, parseImport } from "./importer.js";
 import { mountGolf } from "./golf.js";
+import { setForcedGame } from "./engine.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -47,6 +48,9 @@ const $ = (id) => document.getElementById(id);
 // Nothing under dev/ is fetched unless ?demo is present.
 const IS_DEMO = new URLSearchParams(location.search).has("demo");
 if (IS_DEMO) globalThis.CLICKY_DEMO = true;
+// ?demo&game=golf forces every duel to that minigame, so it can be
+// play-tested against the bot without racing for a random one.
+if (IS_DEMO) setForcedGame(new URLSearchParams(location.search).get("game"));
 const db = IS_DEMO ? await import("../dev/mock-store.js") : await import("./store.js");
 
 // --- App state --------------------------------------------------------------

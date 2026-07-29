@@ -24,11 +24,20 @@ import { hashString, mulberry32 } from "./util.js";
 
 export const DUEL_GAMES = ["rps", "closest", "coin", "dice", "reaction", "golf"];
 
+// Dev-only override so a specific minigame can be play-tested against the
+// demo bot without racing for a random one. Set via setForcedGame (app.js
+// wires this to ?game= under ?demo); left null in normal play.
+let forcedGame = null;
+export function setForcedGame(game) {
+  forcedGame = DUEL_GAMES.includes(game) ? game : null;
+}
+
 function seededFloat(seed) {
   return mulberry32(hashString(seed))();
 }
 
 function pickGame(duelId) {
+  if (forcedGame) return forcedGame;
   return DUEL_GAMES[Math.floor(seededFloat(`${duelId}|game`) * DUEL_GAMES.length)];
 }
 
