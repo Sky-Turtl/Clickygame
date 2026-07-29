@@ -69,6 +69,11 @@ export const DOUBLE_MULTIPLIER = 2;
 // seconds is worth a notification. Set to 0 to be told about every one.
 export const NOTIFY_CLAIM_MIN_SECONDS = 30 * 60;
 
+// A duel (or a coin's double-or-nothing offer) left unsettled this long times
+// out: whoever responded wins outright, or if nobody did, the disputed period
+// is voided and returned to the running clock.
+export const DUEL_TIMEOUT_MS = 2 * 60 * 1000;
+
 // `dev/index.html` sets window.CLICKY_DEMO to run against the in-memory mock
 // store, so the game is playable before Firebase is set up.
 export const isConfigured = () =>

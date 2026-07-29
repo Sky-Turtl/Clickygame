@@ -4,9 +4,9 @@
 // opponent so the duel flow can be exercised solo. Nothing here ships to the
 // real game — the import map in dev/index.html swaps it in.
 
-import { TIE_WINDOW_MS } from "../js/config.js";
+import { DUEL_TIMEOUT_MS, TIE_WINDOW_MS } from "../js/config.js";
 import { multiplierAt } from "../js/rules.js";
-import { applyClaim, applyDoubleChoice, applySettle, applyThrow } from "../js/engine.js";
+import { applyClaim, applyDoubleChoice, applyDuelTimeout, applySettle, applyThrow } from "../js/engine.js";
 
 const BOT = "bot_opponent";
 const clone = (v) => JSON.parse(JSON.stringify(v ?? null));
@@ -268,6 +268,31 @@ export async function submitDoubleChoice(code, duelId, playerId, choice) {
   creditDuelWin(game, next, settleClaimId, at);
   emitAll(code);
   return { duel: clone(next) };
+}
+
+export async function checkDuelTimeout(code, duelId) {
+  const game = g(code);
+  const settleClaimId = nextId("s");
+  const at = now();
+  const next = applyDuelTimeout(game.state, { duelId, at, settleClaimId, timeoutMs: DUEL_TIMEOUT_MS });
+  if (next === undefined) return null;
+
+  game.state = next;
+
+  if (game.state.voidedClaimId) {
+    const voidedId = game.state.voidedClaimId;
+    game.claims[voidedId].status = "void";
+    game.state = { ...game.state, voidedClaimId: null };
+    emitAll(code);
+    return { voided: true };
+  }
+
+  const duel = game.state.duel;
+  if (!duel || duel.status !== "resolved" || duel.settleClaimId !== settleClaimId) return null;
+
+  creditDuelWin(game, duel, settleClaimId, at);
+  emitAll(code);
+  return { timedOut: true, duel: clone(duel) };
 }
 
 function creditDuelWin(game, duel, settleClaimId, at) {

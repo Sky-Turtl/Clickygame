@@ -45,9 +45,9 @@ import {
   ReCaptchaV3Provider,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app-check.js";
 
-import { firebaseConfig, MIN_CLAIM_INTERVAL_MS, RECAPTCHA_SITE_KEY, TIE_WINDOW_MS } from "./config.js";
+import { DUEL_TIMEOUT_MS, firebaseConfig, MIN_CLAIM_INTERVAL_MS, RECAPTCHA_SITE_KEY, TIE_WINDOW_MS } from "./config.js";
 import { multiplierAt } from "./rules.js";
-import { applyClaim, applyDoubleChoice, applySettle, applyThrow } from "./engine.js";
+import { applyClaim, applyDoubleChoice, applyDuelTimeout, applySettle, applyThrow } from "./engine.js";
 
 let db = null;
 let auth = null;
@@ -497,6 +497,42 @@ export async function submitDoubleChoice(code, duelId, playerId, choice) {
 
   await creditDuelWin(code, duel, settleClaimId, at);
   return { duel };
+}
+
+/**
+ * Called periodically (see app.js's tick loop) for any game with an open duel
+ * or double_offer. Runs against the whole `state` node, not just `state/duel`,
+ * because the neither-responded case has to rewind `lastClaimAt` too.
+ *
+ * @returns null, {voided: true} — the disputed claim was voided and the clock
+ *          rewound, nobody credited — or {timedOut: true, duel} for the
+ *          client whose timeout write actually landed.
+ */
+export async function checkDuelTimeout(code, duelId) {
+  const settleClaimId = push(child(gameRef(code), "claims")).key;
+  const at = now();
+
+  const result = await syncedTransaction(child(gameRef(code), "state"), (state) =>
+    applyDuelTimeout(state, { duelId, at, settleClaimId, timeoutMs: DUEL_TIMEOUT_MS })
+  );
+
+  if (!result.committed) return null;
+  const committed = result.snapshot.val() || {};
+
+  if (committed.voidedClaimId) {
+    const voidedId = committed.voidedClaimId;
+    await update(gameRef(code), {
+      [`claims/${voidedId}/status`]: "void",
+      "state/voidedClaimId": null,
+    });
+    return { voided: true };
+  }
+
+  const duel = committed.duel;
+  if (!duel || duel.status !== "resolved" || duel.settleClaimId !== settleClaimId) return null;
+
+  await creditDuelWin(code, duel, settleClaimId, at);
+  return { timedOut: true, duel };
 }
 
 // --- Webhook dedupe ---------------------------------------------------------

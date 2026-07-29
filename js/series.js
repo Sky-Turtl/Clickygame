@@ -163,6 +163,13 @@ export function bucketOHLC(claims, meId, bucketMs, nowMs, limit = 60) {
 /**
  * Per-bucket totals for each side — the stacked/line view behind the candles.
  * Anchored to `nowMs` the same way bucketOHLC is — see its comment.
+ *
+ * A claim's seconds were earned over the span since the *previous* claim,
+ * which can reach well outside the bucket containing the claim's own
+ * timestamp. Rather than dumping the whole amount into that one bucket, each
+ * claim's contribution is split across every bucket its span actually
+ * touches, proportional to the overlap.
+ *
  * @param limit max buckets to return (most recent kept)
  */
 export function bucketTotals(claims, meId, bucketMs, nowMs, limit = 60) {
@@ -177,12 +184,25 @@ export function bucketTotals(claims, meId, bucketMs, nowMs, limit = 60) {
     const t1 = nowMs - k * bucketMs;
     buckets.push({ t0: t1 - bucketMs, t1, mine: 0, theirs: 0 });
   }
+
   for (const r of rows) {
-    // Newest-first search is fine here — buckets.length is tiny (<= limit).
-    const b = buckets.find((x) => r.at > x.t0 && r.at <= x.t1);
-    if (!b) continue;
-    if (r.mine) b.mine += r.seconds;
-    else b.theirs += r.seconds;
+    const spanMs = (r.rawSeconds || 0) * 1000;
+    const end = r.at;
+    const start = end - spanMs;
+
+    if (spanMs <= 0) {
+      const b = buckets.find((x) => end > x.t0 && end <= x.t1);
+      if (b) (r.mine ? (b.mine += r.seconds) : (b.theirs += r.seconds));
+      continue;
+    }
+
+    for (const b of buckets) {
+      const overlapMs = Math.min(end, b.t1) - Math.max(start, b.t0);
+      if (overlapMs <= 0) continue;
+      const share = r.seconds * (overlapMs / spanMs);
+      if (r.mine) b.mine += share;
+      else b.theirs += share;
+    }
   }
 
   return buckets;

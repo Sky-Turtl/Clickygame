@@ -142,6 +142,9 @@ export function applyClaim(state, ctx) {
       picks: null,
     };
     if (game === "reaction") duel.goAt = ctx.at + reactionDelay(ctx.duelId, 1);
+    // Tracks the start of the *current* round for timeout purposes — reset on
+    // every redraw so a long multi-round duel doesn't get cut off mid-stride.
+    duel.roundStartAt = ctx.at;
 
     return {
       ...state,
@@ -200,6 +203,7 @@ export function applySettle(duel, ctx) {
       round: drawnRound + 1,
       lastDraw: { round: drawnRound, detail },
       picks: null,
+      roundStartAt: ctx.at,
     };
     if (duel.game === "reaction") next.goAt = ctx.at + reactionDelay(duel.id, next.round);
     return next;
@@ -273,4 +277,85 @@ export function applyDoubleChoice(duel, ctx) {
 export function applyThrow(duel, { duelId, playerId, choice }) {
   if (!duel || duel.id !== duelId || duel.status !== "open") return undefined;
   return { ...duel, picks: { ...(duel.picks || {}), [playerId]: choice } };
+}
+
+/**
+ * A duel (or a coin's double-or-nothing offer) has gone quiet too long.
+ *
+ * - Both sides already responded: nothing to do here — applySettle/
+ *   applyDoubleChoice would have already moved the duel past "open"/
+ *   "double_offer", so this aborts.
+ * - Exactly one side responded (or, in a double_offer, the winner just
+ *   hasn't chosen): that side wins the pot outright, same shape as a normal
+ *   resolution so the caller's credit path is identical.
+ * - Neither side responded: the disputed period never happened as far as
+ *   the clock is concerned. The claim that started the duel is voided and
+ *   the running clock rewinds to before it, instead of quietly discarding
+ *   that time.
+ *
+ * @param state current game state
+ * @param ctx   { duelId, at, settleClaimId, timeoutMs }
+ * @returns new state, or undefined to abort (wrong/missing duel, not timed
+ *          out yet, or already past the point of timing out)
+ */
+export function applyDuelTimeout(state, ctx) {
+  if (!state || !state.duel || state.duel.id !== ctx.duelId) return undefined;
+  const duel = state.duel;
+
+  if (duel.status === "double_offer") {
+    const elapsed = ctx.at - (duel.decidedAt || 0);
+    if (elapsed < ctx.timeoutMs) return undefined;
+    return {
+      ...state,
+      duel: {
+        ...duel,
+        status: "resolved",
+        payoutMultiplier: 1,
+        resolvedAt: ctx.at,
+        settleClaimId: ctx.settleClaimId,
+        timedOut: true,
+      },
+    };
+  }
+
+  if (duel.status !== "open") return undefined;
+
+  const elapsed = ctx.at - (duel.roundStartAt || duel.createdAt);
+  if (elapsed < ctx.timeoutMs) return undefined;
+
+  const picks = duel.picks || {};
+  const aResponded = picks[duel.challenger] !== undefined && picks[duel.challenger] !== null;
+  const bResponded = picks[duel.defender] !== undefined && picks[duel.defender] !== null;
+
+  if (aResponded && bResponded) return undefined; // already settleable — let applySettle handle it
+
+  if (aResponded || bResponded) {
+    const winner = aResponded ? duel.challenger : duel.defender;
+    const loser = aResponded ? duel.defender : duel.challenger;
+    return {
+      ...state,
+      duel: {
+        ...duel,
+        status: "resolved",
+        winner,
+        loser,
+        finalPicks: picks,
+        detail: null,
+        payoutMultiplier: 1,
+        resolvedAt: ctx.at,
+        settleClaimId: ctx.settleClaimId,
+        timedOut: true,
+      },
+    };
+  }
+
+  // Neither side responded: void the disputed claim and hand the contested
+  // gap back to the running clock, as if the race never happened.
+  return {
+    ...state,
+    lastClaimAt: duel.createdAt - duel.gapMs,
+    lastClaim: null,
+    duel: null,
+    voidedClaimId: duel.disputedClaimId,
+  };
 }
