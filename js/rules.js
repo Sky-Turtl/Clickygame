@@ -193,6 +193,14 @@ export const PERIODS = [
  * `claimed` counts the 2x multiplier; `actual` is the real wall-clock time that
  * was on the board when the button was hit. They differ only inside 2x windows.
  *
+ * A single claim can bank far more time than a short period spans — it's
+ * whatever built up since the *previous* claim, which might have been hours
+ * ago. So a claim isn't all-or-nothing against a period: it's clipped to
+ * whatever portion of its own [previous claim, this claim] span actually
+ * falls inside the period's window. That also means a claim's contribution
+ * fades smoothly out of "last hour" as the window slides past it, rather
+ * than vanishing in one jump the instant the claim itself turns 1h old.
+ *
  * @returns {Object} { [playerId]: { [periodKey]: {claimed, actual, count} } }
  */
 export function summarize(claims, playerIds, nowMs) {
@@ -205,14 +213,39 @@ export function summarize(claims, playerIds, nowMs) {
   for (const c of claims) {
     if (c.status !== "settled") continue;
     if (!out[c.by]) continue;
-    const age = nowMs - c.at;
+
+    const rawSeconds = c.rawSeconds || 0;
+    const spanMs = rawSeconds * 1000;
+    const end = Math.min(c.at, nowMs);
+    const start = c.at - spanMs;
+
     for (const p of PERIODS) {
-      if (age <= p.ms) {
-        const bucket = out[c.by][p.key];
+      const bucket = out[c.by][p.key];
+      if (p.ms === Infinity) {
         bucket.claimed += c.seconds || 0;
-        bucket.actual += c.rawSeconds || 0;
+        bucket.actual += rawSeconds;
         bucket.count += 1;
+        continue;
       }
+
+      const windowStart = nowMs - p.ms;
+      if (spanMs <= 0) {
+        // An instantaneous event (no measurable span) — either it's in the
+        // window or it isn't.
+        if (c.at > windowStart && c.at <= nowMs) {
+          bucket.claimed += c.seconds || 0;
+          bucket.actual += rawSeconds;
+          bucket.count += 1;
+        }
+        continue;
+      }
+
+      const overlapMs = Math.min(end, nowMs) - Math.max(start, windowStart);
+      if (overlapMs <= 0) continue;
+      const ratio = overlapMs / spanMs;
+      bucket.claimed += (c.seconds || 0) * ratio;
+      bucket.actual += rawSeconds * ratio;
+      bucket.count += 1;
     }
   }
   return out;

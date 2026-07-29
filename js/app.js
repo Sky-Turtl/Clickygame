@@ -1,6 +1,7 @@
 // Clicky — app shell, rendering, and the multi-game claim fan-out.
 
 import {
+  DUEL_TIMEOUT_MS,
   isConfigured,
   MIN_CLAIM_INTERVAL_MS,
   NOTIFY_CLAIM_MIN_SECONDS,
@@ -78,6 +79,9 @@ let claiming = false;
 /** Duels already announced/toasted locally, so we don't repeat on every render. */
 const seenDuels = new Set();
 const seenResults = new Set();
+/** code -> id of the currently-open duel, so a void (duel node cleared with no
+ * resolution) can be told apart from a normal resolved-then-dismissed duel. */
+const openDuelIds = new Map();
 /** Games whose first state snapshot has been processed — see onStateChange. */
 const primedGames = new Set();
 let lastWindowState = new Map(); // code -> boolean (was 2x active last tick)
@@ -919,7 +923,10 @@ function onStateChange(g) {
   // first claims batch.
   if (!primedGames.has(g.code)) {
     primedGames.add(g.code);
-    if (d?.status === "open") seenDuels.add(d.id);
+    if (d?.status === "open") {
+      seenDuels.add(d.id);
+      openDuelIds.set(g.code, d.id);
+    }
     if (d?.status === "resolved") {
       seenResults.add(d.id);
       dismissedResults.add(d.id);
@@ -927,7 +934,20 @@ function onStateChange(g) {
     return;
   }
 
-  if (!d) return;
+  if (!d) {
+    // A duel that was open just vanished with no resolution — timed out with
+    // nobody responding, so the disputed period was voided and the clock
+    // rewound rather than settled. (A normal win keeps the duel node around,
+    // resolved, until someone dismisses the modal.)
+    const openId = openDuelIds.get(g.code);
+    if (openId && !seenResults.has(openId)) {
+      toast(`⚔️ A contested claim in ${esc(gameLabel(g))} went unanswered — voided, time returned to the clock.`, "warn");
+    }
+    openDuelIds.delete(g.code);
+    return;
+  }
+
+  if (d.status === "open") openDuelIds.set(g.code, d.id);
 
   // A duel I'm in just opened.
   if (d.status === "open" && !seenDuels.has(d.id)) {
@@ -1002,8 +1022,28 @@ function gameLabel(g) {
 }
 
 function tick() {
-  for (const g of games.values()) checkWindows(g);
+  for (const g of games.values()) {
+    checkWindows(g);
+    checkDuelExpiry(g);
+  }
   render();
+}
+
+/**
+ * Every client with the game open races to notice a stale duel — the
+ * transaction inside checkDuelTimeout guarantees only one of them actually
+ * writes the result. Cheap local pre-check first so an unexpired duel doesn't
+ * fire a transaction every 200ms.
+ */
+function checkDuelExpiry(g) {
+  const d = g.state?.duel;
+  if (!d) return;
+  if (d.status !== "open" && d.status !== "double_offer") return;
+
+  const startedAt = d.status === "double_offer" ? d.decidedAt : d.roundStartAt || d.createdAt;
+  if (db.now() - startedAt < DUEL_TIMEOUT_MS) return;
+
+  db.checkDuelTimeout(g.code, d.id);
 }
 
 function render() {
@@ -1947,6 +1987,7 @@ function renderDuelModal() {
           <div class="pot" data-el="pot"></div>
           <div class="duel-picker" data-el="picker"></div>
           <p class="modal-status" data-el="status"></p>
+          <p class="modal-timeout hidden" data-el="countdown"></p>
           <div class="rps-result hidden" data-el="result"></div>
           <div class="modal-actions">
             <div class="spacer"></div>
@@ -2049,6 +2090,7 @@ function renderDuelModal() {
     const resultEl = el("result");
     const dismissEl = el("dismiss");
     const lockEl = el("lock");
+    const countdownEl = el("countdown");
 
     if (resolved) {
       const iWon = d.winner === meId;
@@ -2059,6 +2101,11 @@ function renderDuelModal() {
           ? `<div class="rr-detail">Double-or-nothing gone wrong — the win flipped sides on the extra flip.</div>`
           : `<div class="rr-detail">Doubled it! 🔥</div>`
         : "";
+      const timeoutNote = d.timedOut
+        ? `<div class="rr-detail">${esc(iWon ? "You" : oppName)} made a move before time ran out — ${
+            iWon ? "the win goes to you." : "they get it."
+          }</div>`
+        : "";
       resultEl.innerHTML = `
         <div class="rr-throws">${resultDetailHtml(d, meId, oppId, oppName)}</div>
         <div class="rr-verdict ${iWon ? "won" : "lost"}">${iWon ? "You take it" : "You lose it"}</div>
@@ -2067,9 +2114,11 @@ function renderDuelModal() {
             ? `${fmtDuration(d.potSeconds * (d.payoutMultiplier || 1))} banked. ${esc(oppName)} gets nothing.`
             : `${esc(oppName)} takes ${fmtDuration(d.potSeconds * (d.payoutMultiplier || 1))}.`
         }</div>
+        ${timeoutNote}
         ${doubleNote}`;
       dismissEl.classList.remove("hidden");
       lockEl.classList.add("hidden");
+      countdownEl.classList.add("hidden");
     } else {
       resultEl.classList.add("hidden");
       dismissEl.classList.add("hidden");
@@ -2085,6 +2134,14 @@ function renderDuelModal() {
       } else {
         statusEl.textContent = `Locked in. Waiting for ${oppName}…`;
       }
+
+      const startedAt = d.status === "double_offer" ? d.decidedAt : d.roundStartAt || d.createdAt;
+      const remaining = startedAt ? DUEL_TIMEOUT_MS - (db.now() - startedAt) : DUEL_TIMEOUT_MS;
+      countdownEl.classList.remove("hidden");
+      countdownEl.textContent =
+        remaining > 0
+          ? `Auto-resolves in ${fmtDurationShort(Math.ceil(remaining / 1000))} if unanswered.`
+          : "Resolving…";
     }
   }
 }
