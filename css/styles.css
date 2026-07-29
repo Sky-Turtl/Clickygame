@@ -401,6 +401,7 @@ input[type=date] { color-scheme: dark; }
 .gc-catchup.safe { color: var(--green); }
 .gc-catchup.lost { color: var(--text-faint); }
 .gc-catchup.urgent { color: var(--red); font-weight: 700; }
+.gc-clinch { font-size: 11.5px; margin-top: 3px; color: var(--text-faint); }
 
 .sync-toggle {
   flex: none;

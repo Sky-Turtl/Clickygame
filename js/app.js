@@ -482,12 +482,22 @@ function onClock(g) {
 /**
  * How much real time is left before the current lead in `g` becomes
  * mathematically unwinnable — i.e. the trailing player could no longer close
- * the gap even by claiming every remaining second on the clock.
+ * the gap even by claiming every remaining second on the clock. `maxClaimable`
+ * already weighs 2x windows between now and the deadline, so both the
+ * deadline and the clinch numbers below account for upcoming double-time.
+ *
+ * The clinch numbers treat the clock as one shared pool: whatever either side
+ * claims from now on is time the other side can no longer also claim. So if I
+ * bank `youNeed` more (on top of my current lead), even the opponent taking
+ * every remaining second still can't catch up — same idea as an elimination
+ * number in sports standings.
  *
  * @returns null when there's no opponent/game-over/dead tie, otherwise
- *   { forMe: boolean, leftMs: number, final: boolean }
+ *   { forMe, leftMs, final, youNeed, theyNeed }
  *   `forMe` is true when I'm the one who needs to catch up; `final` means the
- *   deficit is already unwinnable right now (leftMs is 0).
+ *   deficit is already unwinnable right now (leftMs is 0, youNeed/theyNeed
+ *   are not meaningful and omitted). `youNeed`/`theyNeed` are extra claimed
+ *   seconds — on top of the current totals — that clinch the game outright.
  */
 function catchUpWindow(g) {
   if (isOver(g)) return null;
@@ -508,7 +518,13 @@ function catchUpWindow(g) {
   if (max < budget) return { forMe: lead < 0, leftMs: 0, final: true };
 
   const t = unwinnableAt(g.code, budget, now, end);
-  return { forMe: lead < 0, leftMs: Math.max(0, t - now), final: false };
+  return {
+    forMe: lead < 0,
+    leftMs: Math.max(0, t - now),
+    final: false,
+    youNeed: Math.max(0, (max - lead) / 2),
+    theyNeed: Math.max(0, (max + lead) / 2),
+  };
 }
 
 function openDuelFor(g) {
@@ -880,6 +896,11 @@ function renderGameList() {
         } else {
           catchUpHtml = `<div class="gc-catchup safe">
             ${esc(opp?.name || "They")} have ${fmtDuration(catchUp.leftMs / 1000)} left to catch up</div>`;
+        }
+        if (!catchUp.final) {
+          catchUpHtml += `<div class="gc-clinch">
+            ${esc(opp?.name || "They")} win outright with ${fmtDuration(catchUp.theyNeed)} more ·
+            you win outright with ${fmtDuration(catchUp.youNeed)} more</div>`;
         }
       }
 
