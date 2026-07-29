@@ -75,6 +75,8 @@ let claiming = false;
 /** Duels already announced/toasted locally, so we don't repeat on every render. */
 const seenDuels = new Set();
 const seenResults = new Set();
+/** Games whose first state snapshot has been processed — see onStateChange. */
+const primedGames = new Set();
 let lastWindowState = new Map(); // code -> boolean (was 2x active last tick)
 let lastClaimIds = new Map(); // code -> last claim id we've already put in the feed
 
@@ -626,6 +628,22 @@ async function doClaim() {
 
 function onStateChange(g) {
   const d = g.state?.duel;
+
+  // The first state snapshot for a game reflects whatever was already true
+  // before this session started — an open or resolved duel from before the
+  // page loaded, not a fresh event. Mark it seen (and dismissed, if already
+  // resolved) without popping a modal, the same way onClaimsChange skips the
+  // first claims batch.
+  if (!primedGames.has(g.code)) {
+    primedGames.add(g.code);
+    if (d?.status === "open") seenDuels.add(d.id);
+    if (d?.status === "resolved") {
+      seenResults.add(d.id);
+      dismissedResults.add(d.id);
+    }
+    return;
+  }
+
   if (!d) return;
 
   // A duel I'm in just opened.
@@ -1332,7 +1350,36 @@ function renderDetail() {
  * @param g      game to pull claims from
  * @param limit  most recent runs to show
  */
+/**
+ * Which run's <details> is expanded in each feed, keyed by the id of the
+ * run's first claim (stable across re-renders). The feed re-renders every
+ * tick because the "…ago" labels keep changing, which would otherwise blow
+ * away an open <details> the instant you tapped it — so open/closed state is
+ * tracked here and baked back into the markup on every render instead.
+ */
+const openFeedRuns = new Map(); // hostId -> Set<runKey>
+
 function renderFeed(hostId, g, limit) {
+  const host = $(hostId);
+  let openSet = openFeedRuns.get(hostId);
+  if (!openSet) {
+    openSet = new Set();
+    openFeedRuns.set(hostId, openSet);
+    // `toggle` doesn't bubble, but a capturing listener on an ancestor still
+    // sees it on the way down, so delegation still works without rewiring
+    // every <details> on every render.
+    host.addEventListener(
+      "toggle",
+      (e) => {
+        const li = e.target.closest?.("[data-key]");
+        if (!li || e.target.tagName !== "DETAILS") return;
+        if (e.target.open) openSet.add(li.dataset.key);
+        else openSet.delete(li.dataset.key);
+      },
+      true
+    );
+  }
+
   const escrowedId = g.state?.duel?.status === "open" ? g.state.duel.disputedClaimId : null;
   const feedRows = claimRows(g.claims || [], myId(g));
   const runs = groupRuns(feedRows).reverse().slice(0, limit);
@@ -1373,8 +1420,9 @@ function renderFeed(hostId, g, limit) {
               )
               .join("");
 
-            return `<li class="run">
-              <details>
+            const key = esc(String(run.items[0].id));
+            return `<li class="run" data-key="${key}">
+              <details ${openSet.has(key) ? "open" : ""}>
                 <summary>
                   <span class="f-who">${esc(who)}</span>
                   <span class="f-amt">${fmtDuration(run.seconds)}</span>
