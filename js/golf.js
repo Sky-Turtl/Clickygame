@@ -7,21 +7,24 @@
 // reported via `onDone` — the caller submits that as this player's pick, same
 // as any other duel minigame.
 //
-// Both players get the same hole position and wind, derived from the duel id
-// so there's nothing to store — same trick as the 2x windows in rules.js.
+// Both players get the same hole position (and, from round 2 on, the same
+// obstacles) derived from the duel id, so there's nothing to store — same
+// trick as the 2x windows in rules.js.
 
 const W = 300;
 const H = 170;
 const TEE = { x: W / 2, y: H - 22 };
 const HOLE_Y = 26;
-const HOLE_R = 9;
+const HOLE_R = 12; // lenient — a rolling ball that clips the cup counts
 const BALL_R = 6;
-const SINK_R = 10;
+const SINK_R = 14;
+const OBSTACLE_R = 9;
 const MAX_PULL = 80;
 const SHOT_SPEED = 4.5; // lower = softer max-power shots, more forgiving on a touch drag
 const FRICTION = 0.985;
 const STOP_SPEED = 0.06;
-const WALL_BOUNCE = 0.65; // energy kept off the side rails, so it damps out rather than bouncing forever
+const WALL_BOUNCE = 0.65; // energy kept off the side rails/obstacles, so it damps out rather than bouncing forever
+const MIN_WALL_BOUNCE_SPEED = 0.7; // floor on the rebound so a near-flush hit still visibly kicks off instead of pinning against it
 const MAX_FRAMES = 900; // ~15s safety cap so a stuck ball can't hang the modal forever
 
 /** Deterministic [0,1) — a tiny local hash, not worth importing util.js's for one cosmetic offset. */
@@ -35,15 +38,42 @@ function seededRand(seedStr) {
 }
 
 /**
+ * A tie (both players' shots landing at equal distance from the hole,
+ * including both sinking it) replays as another round — see engine.js's
+ * resolveGame/applySettle. Each replay adds one more obstacle to the green,
+ * seeded off the round number so it's the same extra rock for both players.
+ */
+function placeObstacles(seed, round, hole) {
+  const count = Math.max(0, round - 1);
+  const obstacles = [];
+  for (let i = 0; i < count; i++) {
+    let x, y, tries = 0;
+    do {
+      x = 24 + seededRand(`${seed}|obs${i}|x|${tries}`) * (W - 48);
+      y = HOLE_Y + 34 + seededRand(`${seed}|obs${i}|y|${tries}`) * (TEE.y - HOLE_Y - 68);
+      tries++;
+    } while (
+      tries < 40 &&
+      (Math.hypot(x - hole.x, y - hole.y) < 34 ||
+        Math.hypot(x - TEE.x, y - TEE.y) < 34 ||
+        obstacles.some((o) => Math.hypot(x - o.x, y - o.y) < OBSTACLE_R * 2 + 12))
+    );
+    obstacles.push({ x, y });
+  }
+  return obstacles;
+}
+
+/**
  * @param container element to mount the canvas + controls into
  * @param seed      shared seed (the duel id) so both players get the same course
+ * @param round     current duel round — round 2+ adds one more obstacle each time
  * @param onDone    (distance:number) => void — fires once, distance 0 means sunk
  * @returns {destroy()} to unhook listeners if the modal goes away mid-shot
  */
-export function mountGolf(container, seed, onDone) {
+export function mountGolf(container, seed, round, onDone) {
   const holeOffset = (seededRand(seed + "|hole") - 0.5) * 2 * 70; // -70..70
-  const wind = (seededRand(seed + "|wind") - 0.5) * 2 * 0.012; // small lateral drift while airborne
   const hole = { x: Math.max(30, Math.min(W - 30, W / 2 + holeOffset)), y: HOLE_Y };
+  const obstacles = placeObstacles(seed, round || 1, hole);
 
   container.innerHTML = "";
   const canvas = document.createElement("canvas");
@@ -80,6 +110,12 @@ export function mountGolf(container, seed, onDone) {
     ctx.fillStyle = "#06100a";
     ctx.arc(hole.x, hole.y, HOLE_R, 0, Math.PI * 2);
     ctx.fill();
+    for (const o of obstacles) {
+      ctx.beginPath();
+      ctx.fillStyle = "#5b6675";
+      ctx.arc(o.x, o.y, OBSTACLE_R, 0, Math.PI * 2);
+      ctx.fill();
+    }
     if ((dragging || pending) && dragTo) {
       ctx.strokeStyle = "rgba(255,255,255,.55)";
       ctx.lineWidth = 2;
@@ -170,7 +206,6 @@ export function mountGolf(container, seed, onDone) {
   function tick() {
     if (done) return;
     frame++;
-    vel.x += wind;
     ball.x += vel.x;
     ball.y += vel.y;
     vel.x *= FRICTION;
@@ -180,16 +215,36 @@ export function mountGolf(container, seed, onDone) {
     // it — only the near/far ends (past the tee, past the hole) end the shot.
     if (ball.x < BALL_R) {
       ball.x = BALL_R;
-      vel.x = Math.abs(vel.x) * WALL_BOUNCE;
+      vel.x = Math.max(Math.abs(vel.x) * WALL_BOUNCE, MIN_WALL_BOUNCE_SPEED);
     } else if (ball.x > W - BALL_R) {
       ball.x = W - BALL_R;
-      vel.x = -Math.abs(vel.x) * WALL_BOUNCE;
+      vel.x = -Math.max(Math.abs(vel.x) * WALL_BOUNCE, MIN_WALL_BOUNCE_SPEED);
+    }
+
+    // Obstacles bounce the ball the same way the rails do, just off
+    // whichever direction it hit them from instead of a fixed axis.
+    for (const o of obstacles) {
+      const dx = ball.x - o.x;
+      const dy = ball.y - o.y;
+      const dist = Math.hypot(dx, dy) || 0.0001;
+      const minDist = BALL_R + OBSTACLE_R;
+      if (dist >= minDist) continue;
+      const nx = dx / dist;
+      const ny = dy / dist;
+      ball.x = o.x + nx * minDist;
+      ball.y = o.y + ny * minDist;
+      const vn = vel.x * nx + vel.y * ny;
+      if (vn < 0) {
+        const bounceSpeed = Math.max(Math.abs(vn) * WALL_BOUNCE, MIN_WALL_BOUNCE_SPEED);
+        vel.x += (bounceSpeed - vn) * nx;
+        vel.y += (bounceSpeed - vn) * ny;
+      }
     }
 
     const outOfBounds = ball.y < -20 || ball.y > H + 20;
     const speed = Math.hypot(vel.x, vel.y);
     const distToHole = Math.hypot(ball.x - hole.x, ball.y - hole.y);
-    const sunk = distToHole < SINK_R && speed < 1.2;
+    const sunk = distToHole < SINK_R && speed < 1.6;
 
     draw();
 
