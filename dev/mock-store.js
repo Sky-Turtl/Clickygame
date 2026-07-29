@@ -15,6 +15,7 @@ import {
   applySettle,
   applyStartReaction,
   applyThrow,
+  getForcedGame,
 } from "../js/engine.js";
 
 const BOT = "bot_opponent";
@@ -228,6 +229,15 @@ export async function claim(code, playerId) {
     status: "settled",
   };
   emitAll(code);
+
+  // A forced game (?demo&game=...) means the tester wants a duel every time,
+  // not just when they happen to out-race the bot within the tie window — so
+  // make the bot immediately race the player's claim instead of waiting for
+  // a manual "Bot claims now" click.
+  if (playerId !== BOT && getForcedGame()) {
+    setTimeout(() => claim(code, BOT), 250);
+  }
+
   return { outcome: "claim", claim: { id: claimId, ...c } };
 }
 

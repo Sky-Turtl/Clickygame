@@ -32,6 +32,10 @@ export function setForcedGame(game) {
   forcedGame = DUEL_GAMES.includes(game) ? game : null;
 }
 
+export function getForcedGame() {
+  return forcedGame;
+}
+
 function seededFloat(seed) {
   return mulberry32(hashString(seed))();
 }
