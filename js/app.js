@@ -2256,15 +2256,7 @@ function renderDuelModal() {
             }</div>`
           : "";
         const coinResult = d.game === "coin" ? d.detail?.result : null;
-        const coinFlipHtml = coinResult
-          ? `<div class="coin-flip-stage">
-              <div class="coin-face spin">🪙</div>
-            </div>
-            <div class="coin-outcome ${coinResult}">${coinResult === "heads" ? "Heads" : "Tails"}</div>`
-          : "";
-
-        resultEl.innerHTML = `
-          ${coinFlipHtml}
+        const restHtml = `
           <div class="rr-throws">${resultDetailHtml(d, meId, oppId, oppName)}</div>
           <div class="rr-verdict ${iWon ? "won" : "lost"}">${iWon ? "You take it" : "You lose it"}</div>
           <div class="rr-detail">${
@@ -2274,6 +2266,12 @@ function renderDuelModal() {
           }</div>
           ${timeoutNote}
           ${doubleNote}`;
+
+        if (coinResult) {
+          playCoinFlip(resultEl, coinResult, restHtml);
+        } else {
+          resultEl.innerHTML = restHtml;
+        }
       }
 
       dismissEl.classList.remove("hidden");
@@ -2290,10 +2288,11 @@ function renderDuelModal() {
         if (resultEl.dataset.sig !== resultSig) {
           resultEl.dataset.sig = resultSig;
           const coinResult = d.detail?.result;
-          resultEl.innerHTML = coinResult
-            ? `<div class="coin-flip-stage"><div class="coin-face spin">🪙</div></div>
-               <div class="coin-outcome ${coinResult}">${coinResult === "heads" ? "Heads" : "Tails"}</div>`
-            : "";
+          if (coinResult) {
+            playCoinFlip(resultEl, coinResult, "");
+          } else {
+            resultEl.innerHTML = "";
+          }
         }
         statusEl.textContent =
           d.winner === meId
@@ -2365,6 +2364,42 @@ function pickerHtml(d, iPicked, meId) {
         (t) => `<button class="throw" data-pick="${t}"><span>${THROW_EMOJI[t]}</span>${t[0].toUpperCase()}${t.slice(1)}</button>`
       ).join("")}</div>`;
   }
+}
+
+const COIN_FLIP_MS = 3000;
+const COIN_FLIP_TICK_MS = 110;
+let coinFlipSeq = 0;
+
+/**
+ * Animate a coin flip into `el`: alternates the shown face between heads and
+ * tails for COIN_FLIP_MS, then settles on `finalResult` and appends
+ * `trailingHtml`. The outcome is already decided server-side — this is purely
+ * a client-side reveal delay for suspense.
+ */
+function playCoinFlip(el, finalResult, trailingHtml) {
+  const token = String(++coinFlipSeq);
+  el.dataset.flipToken = token;
+
+  el.innerHTML = `<div class="coin-flip-stage"><div class="coin-face spin-loop">🪙</div></div>
+    <div class="coin-outcome flipping heads">Heads</div>`;
+  const outcomeEl = el.querySelector(".coin-outcome");
+
+  let tick = 0;
+  const interval = setInterval(() => {
+    if (el.dataset.flipToken !== token) return clearInterval(interval);
+    tick++;
+    const face = tick % 2 === 0 ? "heads" : "tails";
+    outcomeEl.textContent = face === "heads" ? "Heads" : "Tails";
+    outcomeEl.className = `coin-outcome flipping ${face}`;
+  }, COIN_FLIP_TICK_MS);
+
+  setTimeout(() => {
+    clearInterval(interval);
+    if (el.dataset.flipToken !== token) return;
+    el.innerHTML = `<div class="coin-flip-stage"><div class="coin-face settle">🪙</div></div>
+      <div class="coin-outcome ${finalResult}">${finalResult === "heads" ? "Heads" : "Tails"}</div>
+      ${trailingHtml}`;
+  }, COIN_FLIP_MS);
 }
 
 /** The "X vs Y" line on the result screen, tailored to whichever minigame decided it. */
