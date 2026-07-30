@@ -1520,14 +1520,16 @@ function paceFor(g) {
   const theirs = rows[opp.id]?.all.claimed || 0;
   const lead = mine - theirs;
 
-  // How much more, per that same bucket size, the trailing side would need
-  // to average — sustained for the rest of the game — to erase the gap
-  // exactly by the deadline. A rough guide, not the exact math
-  // `catchUpWindow` does — it spreads the deficit evenly over the remaining
-  // time rather than accounting for exactly where 2x windows fall.
+  // How much more, per that same bucket size, you'd need to be ahead of your
+  // opponent by — sustained for the rest of the game — to erase the gap
+  // exactly by the deadline. That's the deficit spread evenly over the
+  // remaining time. Compared directly against `diff` (what you're actually
+  // up by in that window) to flag when the real margin is falling short.
+  // A rough guide, not the exact math `catchUpWindow` does — it doesn't
+  // account for exactly where 2x windows fall.
   const remainMs = Math.max(0, g.meta.endsAt - db.now());
 
-  const windows = ["1h", "6h", "1d"].map((key) => {
+  const windows = ["1h", "6h", "1d", "3d"].map((key) => {
     const p = PERIODS.find((x) => x.key === key);
     const m = rows[myId(g)]?.[key]?.claimed || 0;
     const t = rows[opp.id]?.[key]?.claimed || 0;
@@ -2205,12 +2207,14 @@ function catchUpHtmlFor(catchUp, opp, remainMs) {
   return html;
 }
 
-/** "mm:ss", minutes uncapped (e.g. "125:07" for 2h5m7s) — for the tight
+/** "mm:ss", or "hh:mm:ss" once it runs an hour or past — for the tight
  * per-row catch-up parenthetical, where the compact word form reads noisy. */
 function fmtMmSs(seconds) {
   const total = Math.max(0, Math.round(Number(seconds) || 0));
-  const m = Math.floor(total / 60);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
@@ -2219,9 +2223,13 @@ function paceHtmlFor(pace) {
   const rows = pace.windows
     .map((w) => {
       const active = w.mine + w.theirs > 0;
-      const cls = w.diff > 0 ? "up" : w.diff < 0 ? "down" : "";
-      const text = active ? `${w.diff > 0 ? "+" : w.diff < 0 ? "−" : ""}${fmtDurationShort(Math.abs(w.diff))}` : "—";
-      const needText = w.need != null ? ` <span class="gc-pace-need">(${fmtMmSs(w.need)} to catch up)</span>` : "";
+      // Red whenever the margin you're actually up by is falling short of
+      // what you'd need to sustain to close the gap by the deadline —
+      // regardless of whether that margin is nominally positive or negative.
+      const short = w.need != null && w.diff < w.need;
+      const cls = short ? "short" : w.diff > 0 ? "up" : w.diff < 0 ? "down" : "";
+      const text = active ? `${w.diff > 0 ? "+" : w.diff < 0 ? "−" : ""}${fmtMmSs(Math.abs(w.diff))}` : "—";
+      const needText = w.need != null ? ` <span class="gc-pace-need">(need ${fmtMmSs(w.need)})</span>` : "";
       return `<div class="gc-pace-row"><span class="gc-pace-label">${esc(w.label)}</span><span class="gc-pace-diff ${cls}">${text}${needText}</span></div>`;
     })
     .join("");
