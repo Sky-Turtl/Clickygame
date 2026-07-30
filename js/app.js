@@ -2232,13 +2232,8 @@ function renderDuelModal() {
         `${(d.gapMs / 1000).toFixed(1)}s of each other. ${esc(meta.rule)}`;
 
     const potMultiplier = d.payoutMultiplier || 1;
-    const potLabel = resolved
-      ? d.doubled && !d.doubleLost
-        ? "Doubled!"
-        : "Settled"
-      : `In escrow${d.round > 1 ? ` · round ${d.round}` : ""}`;
-    el("pot").innerHTML = `<div class="pot-label">${potLabel}</div>
-      <div class="pot-value">${fmtDuration(d.potSeconds * potMultiplier)}</div>`;
+    const isCoin = d.game === "coin";
+    const coinFace = isCoin ? d.detail?.result : null;
 
     // Picker (also hosts the coin's double-or-nothing choice, once decided)
     const pickerEl = el("picker");
@@ -2267,14 +2262,46 @@ function renderDuelModal() {
 
     if (resolved) {
       const iWon = d.winner === meId;
-      statusEl.textContent = "";
       resultEl.classList.remove("hidden");
 
-      // Rebuild (and re-trigger the coin's flip animation) only the moment
-      // this particular resolution appears — not on every 200ms tick while
-      // the result stays on screen waiting to be dismissed.
+      // Kick off (or continue) the coin's flip animation the moment this
+      // resolution appears — not on every 200ms tick while it plays out.
       const resultSig = `${d.id}|${d.status}|${d.doubled}|${d.doubleLost}|${d.timedOut}`;
-      if (resultEl.dataset.sig !== resultSig) {
+      if (coinFace && resultEl.dataset.flipSig !== resultSig) {
+        resultEl.dataset.flipSig = resultSig;
+        if (d.doubled) {
+          // A genuine double-or-nothing gamble is a fresh flip, however far
+          // the first one got — settle it with a couple of pulses.
+          const secondFace = d.doubleLost ? (coinFace === "heads" ? "tails" : "heads") : coinFace;
+          card.dataset.coinRevealAt = String(db.now() + COIN_FLIP_MS + COIN_PULSE_MS * COIN_PULSE_COUNT);
+          playCoinFlip(resultEl, secondFace, { pulse: true });
+        } else if (!card.dataset.coinRevealAt || db.now() >= Number(card.dataset.coinRevealAt)) {
+          // No flip already in flight (e.g. this card just mounted after a
+          // reload) — play one now instead of jumping straight to settled.
+          card.dataset.coinRevealAt = String(db.now() + COIN_FLIP_MS);
+          playCoinFlip(resultEl, coinFace);
+        }
+        // Otherwise the double_offer stage's flip is still spinning toward
+        // this same face — let it run rather than restarting or cutting it off.
+      }
+
+      const stillFlipping = coinFace && card.dataset.coinRevealAt && db.now() < Number(card.dataset.coinRevealAt);
+      statusEl.textContent = "";
+
+      // While the coin is still spinning, the pot stays on the "in escrow"
+      // look — no "Doubled!"/"Settled" label — so a fast bot response can't
+      // flash past the flip.
+      const potLabel = stillFlipping
+        ? `In escrow${d.round > 1 ? ` · round ${d.round}` : ""}`
+        : d.doubled && !d.doubleLost
+          ? "Doubled!"
+          : "Settled";
+      el("pot").innerHTML = `<div class="pot-label">${potLabel}</div>
+        <div class="pot-value">${fmtDuration(d.potSeconds * potMultiplier)}</div>`;
+
+      // Hold the verdict/explanation back until the coin (if any) has fully
+      // settled, so a fast bot response can't flash straight past the flip.
+      if (!stillFlipping && resultEl.dataset.sig !== resultSig) {
         resultEl.dataset.sig = resultSig;
 
         const doubleNote = d.doubled
@@ -2304,21 +2331,12 @@ function renderDuelModal() {
           ${doubleNote}
           ${golfReplayHtml}`;
 
-        // The initial coin flip already played during the "double_offer" stage
-        // (before the winner was offered take/double). Taking it (or timing
-        // out) finishes the duel right there with no replay — only a genuine
-        // double-or-nothing gamble is a new flip that needs its own animation.
-        const initialFace = d.game === "coin" ? d.detail?.result : null;
-        if (initialFace && d.doubled) {
-          const secondFace = d.doubleLost ? (initialFace === "heads" ? "tails" : "heads") : initialFace;
-          playCoinFlip(resultEl, secondFace, restHtml);
-        } else if (initialFace) {
-          resultEl.innerHTML = `<div class="coin-flip-stage"><div class="coin-face settle ${initialFace}">${COIN_FACE[initialFace]}</div></div>
-            <div class="coin-outcome ${initialFace}">${initialFace === "heads" ? "Heads" : "Tails"}</div>
-            ${restHtml}`;
-        } else {
-          resultEl.innerHTML = restHtml;
-        }
+        const finalFace = d.doubled ? (d.doubleLost ? (coinFace === "heads" ? "tails" : "heads") : coinFace) : coinFace;
+        const coinHtml = finalFace
+          ? `<div class="coin-flip-stage"><div class="coin-face settle ${finalFace}">${COIN_FACE[finalFace]}</div></div>
+            <div class="coin-outcome ${finalFace}">${finalFace === "heads" ? "Heads" : "Tails"}</div>`
+          : "";
+        resultEl.innerHTML = `${coinHtml}${restHtml}`;
 
         if (myGolfPath || oppGolfPath) {
           const mount = resultEl.querySelector('[data-el="golf-replay"]');
@@ -2334,6 +2352,9 @@ function renderDuelModal() {
       dismissEl.classList.add("hidden");
       lockEl.classList.remove("hidden"); // still locked either way — waiting on a pick or a double-or-nothing choice
 
+      el("pot").innerHTML = `<div class="pot-label">In escrow${d.round > 1 ? ` · round ${d.round}` : ""}</div>
+        <div class="pot-value">${fmtDuration(d.potSeconds * potMultiplier)}</div>`;
+
       if (d.status === "double_offer") {
         // Play the flip once, then hold the take/double choice back until it
         // settles — the winner shouldn't see (or be able to click) the offer
@@ -2345,7 +2366,7 @@ function renderDuelModal() {
           const coinResult = d.detail?.result;
           if (coinResult) {
             card.dataset.coinRevealAt = String(db.now() + COIN_FLIP_MS);
-            playCoinFlip(resultEl, coinResult, "");
+            playCoinFlip(resultEl, coinResult);
           } else {
             resultEl.innerHTML = "";
             delete card.dataset.coinRevealAt;
@@ -2428,16 +2449,20 @@ function pickerHtml(d, iPicked, meId) {
 
 const COIN_FLIP_MS = 1000;
 const COIN_FLIP_TICK_MS = 110;
+const COIN_PULSE_MS = 350;
+const COIN_PULSE_COUNT = 2;
 let coinFlipSeq = 0;
 const COIN_FACE = { heads: "👑", tails: "⭐" };
 
 /**
  * Animate a coin flip into `el`: alternates the shown face between heads and
- * tails for COIN_FLIP_MS, then settles on `finalResult` and appends
- * `trailingHtml`. The outcome is already decided server-side — this is purely
- * a client-side reveal delay for suspense.
+ * tails for COIN_FLIP_MS, then settles on `finalResult`. The outcome is
+ * already decided server-side — this is purely a client-side reveal delay
+ * for suspense. With `pulse: true` (the double-or-nothing re-flip), the
+ * final face grows/shrinks a couple of times before settling, instead of
+ * settling immediately.
  */
-function playCoinFlip(el, finalResult, trailingHtml) {
+function playCoinFlip(el, finalResult, { pulse = false } = {}) {
   const token = String(++coinFlipSeq);
   el.dataset.flipToken = token;
 
@@ -2457,12 +2482,19 @@ function playCoinFlip(el, finalResult, trailingHtml) {
     outcomeEl.className = `coin-outcome flipping ${face}`;
   }, COIN_FLIP_TICK_MS);
 
+  const outcomeLabel = finalResult === "heads" ? "Heads" : "Tails";
   setTimeout(() => {
     clearInterval(interval);
     if (el.dataset.flipToken !== token) return;
-    el.innerHTML = `<div class="coin-flip-stage"><div class="coin-face settle ${finalResult}">${COIN_FACE[finalResult]}</div></div>
-      <div class="coin-outcome ${finalResult}">${finalResult === "heads" ? "Heads" : "Tails"}</div>
-      ${trailingHtml}`;
+    el.innerHTML = `<div class="coin-flip-stage"><div class="coin-face ${pulse ? "pulse" : "settle"} ${finalResult}">${COIN_FACE[finalResult]}</div></div>
+      <div class="coin-outcome ${finalResult}">${outcomeLabel}</div>`;
+    if (pulse) {
+      setTimeout(() => {
+        if (el.dataset.flipToken !== token) return;
+        const face = el.querySelector(".coin-face");
+        if (face) face.className = `coin-face settle ${finalResult}`;
+      }, COIN_PULSE_MS * COIN_PULSE_COUNT);
+    }
   }, COIN_FLIP_MS);
 }
 
