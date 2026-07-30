@@ -166,16 +166,31 @@ function showScreen(which) {
   }
   window.scrollTo(0, 0);
   if (which === "setup") renderRejoin();
+  if (which === "hub") initHubDashboard();
   if (which === "profile") { renderProfile(); initProfileDashboard(); }
   if (which === "detail") initDetailDashboard();
 }
 
 // --- Box dashboards (desktop drag-to-rearrange + resize, synced to the account) --
+//
+// Each dashboard is a row of 1-3 "columns" (.dash-col), and each column is a
+// vertical stack of boxes. Dragging a box over a column live-reorders it into
+// that column's stack (pushing the rest of that column down); dragging past
+// the outer edge of the first/last column spins up a new one (capped at
+// DASH_MAX_COLS); a column left empty by a move is pruned back out (floor of
+// DASH_MIN_COLS). Layout — which column each box lives in, and any explicit
+// height — is saved locally and, if signed in, to the account.
 
 const DASH_LAYOUT_KEY = "clicky-dashboard-layout-v2";
+const DASH_MIN_COLS = 1;
+const DASH_MAX_COLS = 3;
+const DASH_DEFAULT_COLS = 2;
+const DASH_EDGE_PX = 60; // how far past the outer column edge triggers a new column
+const DASH_MIN_BOX_HEIGHT = 40;
+
 const dashInited = new Set(); // dash element ids already wired up
 
-/** { profile: [{id, span, height}], detail: [...] } | null while unloaded */
+/** { profile: {cols:[[boxId,...],...], heights:{boxId:"123px"}}, detail: {...}, hub: {...} } */
 let dashboardLayout = loadLocalDashboardLayout();
 
 function loadLocalDashboardLayout() {
@@ -192,30 +207,94 @@ function saveDashboardLayout() {
   if (account) db.setAccountDashboardLayout(account.uid, dashboardLayout).catch(() => {});
 }
 
+/** Normalizes a saved entry to {cols, heights}, migrating the old flat-array shape from before columns existed. */
+function normalizeDashEntry(entry) {
+  if (entry && Array.isArray(entry.cols)) {
+    return { cols: entry.cols.map((c) => [...c]), heights: { ...(entry.heights || {}) } };
+  }
+  if (Array.isArray(entry)) {
+    const cols = Array.from({ length: DASH_DEFAULT_COLS }, () => []);
+    const heights = {};
+    entry.forEach((e, i) => {
+      cols[i % DASH_DEFAULT_COLS].push(e.id);
+      if (e.height) heights[e.id] = e.height;
+    });
+    return { cols, heights };
+  }
+  return null;
+}
+
 function captureDashLayout(dash, screenKey) {
-  dashboardLayout[screenKey] = [...dash.children].map((box) => ({
-    id: box.dataset.box,
-    span: box.dataset.span === "2" ? 2 : 1,
-    height: box.style.height || null,
-  }));
+  const cols = [...dash.querySelectorAll(":scope > .dash-col")]
+    .map((col) => [...col.querySelectorAll(":scope > .dash-box")].map((b) => b.dataset.box))
+    .filter((c) => c.length);
+  const heights = {};
+  for (const box of dash.querySelectorAll(".dash-box")) {
+    if (box.style.height) heights[box.dataset.box] = box.style.height;
+  }
+  dashboardLayout[screenKey] = {
+    cols: cols.length ? cols : [[...dash.querySelectorAll(".dash-box")].map((b) => b.dataset.box)],
+    heights,
+  };
   saveDashboardLayout();
 }
 
+/** Rebuilds a dashboard's .dash-col wrappers/box placement from saved layout (or a sane default). */
 function applyDashLayout(dash, screenKey) {
-  const saved = dashboardLayout[screenKey];
-  if (!Array.isArray(saved)) return;
-  const boxes = new Map([...dash.children].map((box) => [box.dataset.box, box]));
-  for (const entry of saved) {
-    const box = boxes.get(entry.id);
-    if (!box) continue;
-    dash.appendChild(box);
-    if (entry.span === 2) box.dataset.span = "2";
-    else delete box.dataset.span;
-    if (entry.height) box.style.height = entry.height;
+  const allBoxes = [...dash.querySelectorAll(".dash-box")];
+  const boxIds = allBoxes.map((b) => b.dataset.box);
+  const boxMap = new Map(allBoxes.map((b) => [b.dataset.box, b]));
+
+  let layout = normalizeDashEntry(dashboardLayout[screenKey]);
+  if (!layout) {
+    const cols = Array.from({ length: DASH_DEFAULT_COLS }, () => []);
+    boxIds.forEach((id, i) => cols[i % DASH_DEFAULT_COLS].push(id));
+    layout = { cols, heights: {} };
   }
+
+  // Drop stale/duplicate ids, then place any box the layout doesn't know
+  // about yet (a box added in code since the layout was saved) into column 0.
+  const known = new Set();
+  layout.cols = layout.cols.map((col) =>
+    col.filter((id) => {
+      if (!boxMap.has(id) || known.has(id)) return false;
+      known.add(id);
+      return true;
+    })
+  );
+  for (const id of boxIds) {
+    if (!known.has(id)) { layout.cols[0].push(id); known.add(id); }
+  }
+  layout.cols = layout.cols.filter((c) => c.length);
+  if (!layout.cols.length) layout.cols = [boxIds.slice()];
+  while (layout.cols.length > DASH_MAX_COLS) layout.cols[DASH_MAX_COLS - 1].push(...layout.cols.pop());
+
+  dashboardLayout[screenKey] = layout;
+
+  let cols = [...dash.querySelectorAll(":scope > .dash-col")];
+  while (cols.length < layout.cols.length) {
+    const col = document.createElement("div");
+    col.className = "dash-col";
+    dash.appendChild(col);
+    cols.push(col);
+  }
+  while (cols.length > layout.cols.length) cols.pop().remove();
+
+  layout.cols.forEach((ids, i) => {
+    for (const id of ids) {
+      const box = boxMap.get(id);
+      cols[i].appendChild(box);
+      if (layout.heights[id]) box.style.height = layout.heights[id];
+    }
+  });
 }
 
-const DASH_MIN_BOX_HEIGHT = 40;
+function pruneEmptyDashColumns(dash) {
+  for (const col of [...dash.querySelectorAll(":scope > .dash-col")]) {
+    if (dash.querySelectorAll(":scope > .dash-col").length <= DASH_MIN_COLS) break;
+    if (!col.querySelector(":scope > .dash-box")) col.remove();
+  }
+}
 
 /** Wires up drag-to-rearrange + resize for a dashboard's boxes (desktop only; a no-op on repeat calls). */
 function initDashboard(dashId, screenKey) {
@@ -260,45 +339,21 @@ function initDashboard(dashId, screenKey) {
     box.addEventListener("dragend", () => {
       box.draggable = false;
       box.classList.remove("dragging");
-      for (const b of dash.querySelectorAll(".dash-box")) b.classList.remove("drag-over");
       dragging = null;
+      for (const c of dash.querySelectorAll(".dash-col")) c.classList.remove("drag-target");
+      pruneEmptyDashColumns(dash);
       captureDashLayout(dash, screenKey);
-    });
-    box.addEventListener("dragover", (e) => {
-      if (!dragging || dragging === box) return;
-      e.preventDefault();
-      box.classList.add("drag-over");
-    });
-    box.addEventListener("dragleave", () => box.classList.remove("drag-over"));
-    box.addEventListener("drop", (e) => {
-      e.preventDefault();
-      box.classList.remove("drag-over");
-      if (!dragging || dragging === box) return;
-      const boxes = [...dash.children];
-      const from = boxes.indexOf(dragging);
-      const to = boxes.indexOf(box);
-      if (from < to) dash.insertBefore(dragging, box.nextSibling);
-      else dash.insertBefore(dragging, box);
     });
 
     resizer.addEventListener("pointerdown", (e) => {
       e.preventDefault();
       resizer.setPointerCapture(e.pointerId);
-      const startX = e.clientX;
       const startY = e.clientY;
-      const startWidth = box.getBoundingClientRect().width;
       const startHeight = box.getBoundingClientRect().height;
-      const startSpan = box.dataset.span === "2" ? 2 : 1;
 
       const onMove = (ev) => {
-        const dx = ev.clientX - startX;
         const dy = ev.clientY - startY;
-        const newHeight = Math.max(DASH_MIN_BOX_HEIGHT, startHeight + dy);
-        box.style.height = newHeight + "px";
-        const wantsWide = startWidth + dx > startWidth * 1.25;
-        const wantsNarrow = startWidth + dx < startWidth * 0.75;
-        if (startSpan === 1 && wantsWide) box.dataset.span = "2";
-        else if (startSpan === 2 && wantsNarrow) delete box.dataset.span;
+        box.style.height = Math.max(DASH_MIN_BOX_HEIGHT, startHeight + dy) + "px";
       };
       const onUp = (ev) => {
         resizer.releasePointerCapture(ev.pointerId);
@@ -310,10 +365,54 @@ function initDashboard(dashId, screenKey) {
       document.addEventListener("pointerup", onUp);
     });
   }
+
+  // Delegated at the dashboard level (not per-box) so it can also handle
+  // cross-column moves and spinning up a new column at the outer edges.
+  dash.addEventListener("dragover", (e) => {
+    if (!dragging) return;
+    e.preventDefault();
+
+    const cols = [...dash.querySelectorAll(":scope > .dash-col")];
+    if (!cols.length) return;
+    for (const c of cols) c.classList.remove("drag-target");
+
+    const x = e.clientX;
+    const firstRect = cols[0].getBoundingClientRect();
+    const lastRect = cols[cols.length - 1].getBoundingClientRect();
+
+    let targetCol;
+    if (x < firstRect.left - DASH_EDGE_PX && cols.length < DASH_MAX_COLS) {
+      targetCol = document.createElement("div");
+      targetCol.className = "dash-col";
+      dash.insertBefore(targetCol, cols[0]);
+    } else if (x > lastRect.right + DASH_EDGE_PX && cols.length < DASH_MAX_COLS) {
+      targetCol = document.createElement("div");
+      targetCol.className = "dash-col";
+      dash.appendChild(targetCol);
+    } else {
+      let bestDist = Infinity;
+      for (const col of cols) {
+        const r = col.getBoundingClientRect();
+        const dist = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+        if (dist < bestDist) { bestDist = dist; targetCol = col; }
+      }
+    }
+
+    targetCol.classList.add("drag-target");
+    const y = e.clientY;
+    const siblings = [...targetCol.querySelectorAll(":scope > .dash-box")].filter((b) => b !== dragging);
+    const before = siblings.find((sib) => y < sib.getBoundingClientRect().top + sib.getBoundingClientRect().height / 2);
+    if (before) targetCol.insertBefore(dragging, before);
+    else targetCol.appendChild(dragging);
+
+    pruneEmptyDashColumns(dash);
+  });
+  dash.addEventListener("drop", (e) => e.preventDefault());
 }
 
 function initProfileDashboard() { initDashboard("profile-dashboard", "profile"); }
 function initDetailDashboard() { initDashboard("detail-dashboard", "detail"); }
+function initHubDashboard() { initDashboard("hub-dashboard", "hub"); }
 
 /** The main screen: the hub once you're in a game, otherwise setup. */
 function goHome() {
@@ -668,6 +767,7 @@ async function onAccountChange(acct) {
   if (serverLayout) {
     dashboardLayout = serverLayout;
     try { localStorage.setItem(DASH_LAYOUT_KEY, JSON.stringify(dashboardLayout)); } catch {}
+    if (!$("screen-hub").classList.contains("hidden")) initHubDashboard();
     if (!$("screen-profile").classList.contains("hidden")) initProfileDashboard();
     if (!$("screen-detail").classList.contains("hidden")) initDetailDashboard();
   } else if (Object.keys(dashboardLayout).length) {

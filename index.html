@@ -185,89 +185,103 @@
 
     <div id="hub-banners"></div>
 
-    <!-- The one button -->
-    <div class="clock-card">
-      <div class="clock-label" id="clock-label">On the clock</div>
-      <div class="clock" id="clock">0s</div>
-      <div class="clock-sub" id="clock-sub"></div>
+    <div class="box-dashboard" id="hub-dashboard">
+      <div class="dash-box" data-box="clock">
+        <!-- The one button -->
+        <div class="clock-card">
+          <div class="clock-label" id="clock-label">On the clock</div>
+          <div class="clock" id="clock">0s</div>
+          <div class="clock-sub" id="clock-sub"></div>
 
-      <button class="btn-claim" id="btn-claim">
-        <span class="btn-claim-text">CLAIM</span>
-        <span class="btn-claim-sub" id="btn-claim-sub"></span>
-      </button>
-      <p class="claim-note" id="claim-note"></p>
-    </div>
-
-    <div class="section-head">
-      <h2>Your games</h2>
-      <span class="section-hint" id="sync-hint"></span>
-    </div>
-
-    <div id="game-list" class="game-list"></div>
-
-    <div class="section-head">
-      <h2>Stats</h2>
-      <select id="stats-scope" class="scope-select" aria-label="Which games to show stats for">
-        <option value="__all__">All games</option>
-      </select>
-    </div>
-
-    <div class="card">
-      <p class="card-sub" id="hub-stats-sub">
-        <strong>Claimed</strong> counts the 2x bonus and decides the winner.
-        <strong>Actual</strong> is real wall-clock time that was on the board.
-      </p>
-      <div class="table-scroll">
-        <table class="summary-table" id="hub-summary-table"></table>
-      </div>
-    </div>
-
-    <div class="card">
-      <div class="stat-grid" id="hub-stat-grid"></div>
-    </div>
-
-    <div class="card hidden" id="hub-feed-card">
-      <h2 class="card-title">Claim history</h2>
-      <ul class="feed" id="hub-feed"><li class="feed-empty">No claims yet.</li></ul>
-    </div>
-
-    <!-- Per-click bars -->
-    <div class="card">
-      <div class="chart-head">
-        <h2 class="card-title">Every claim</h2>
-        <div class="seg" role="group" aria-label="Sort claims">
-          <button class="seg-btn active" data-clicksort="time">Order clicked</button>
-          <button class="seg-btn" data-clicksort="size">Size</button>
+          <button class="btn-claim" id="btn-claim">
+            <span class="btn-claim-text">CLAIM</span>
+            <span class="btn-claim-sub" id="btn-claim-sub"></span>
+          </button>
+          <p class="claim-note" id="claim-note"></p>
         </div>
       </div>
-      <div id="chart-clicks-legend"></div>
-      <div class="chart-wrap" id="chart-clicks"></div>
-      <p class="chart-note">Each bar is one claim. A gold cap marks a 2x claim.</p>
-    </div>
 
-    <!-- Who's winning -->
-    <div class="card">
-      <div class="chart-head">
-        <h2 class="card-title">Who's winning</h2>
-        <div class="chart-controls">
-          <select id="bucket-size" class="scope-select" aria-label="Time bucket">
-            <option value="1m">Per minute</option>
-            <option value="30m">Per half hour</option>
-            <option value="1h" selected>Per hour</option>
-            <option value="6h">Per 6 hours</option>
-            <option value="1d">Per day</option>
+      <div class="dash-box" data-box="games">
+        <div class="section-head">
+          <h2>Your games</h2>
+          <span class="section-hint" id="sync-hint"></span>
+        </div>
+        <div id="game-list" class="game-list"></div>
+      </div>
+
+      <div class="dash-box" data-box="stats-table">
+        <div class="section-head">
+          <h2>Stats</h2>
+          <select id="stats-scope" class="scope-select" aria-label="Which games to show stats for">
+            <option value="__all__">All games</option>
           </select>
-          <div class="seg" role="group" aria-label="Chart style">
-            <button class="seg-btn active" data-leadstyle="area">Line</button>
-            <button class="seg-btn" data-leadstyle="candle">Candles</button>
+        </div>
+        <div class="card">
+          <p class="card-sub" id="hub-stats-sub">
+            <strong>Claimed</strong> counts the 2x bonus and decides the winner.
+            <strong>Actual</strong> is real wall-clock time that was on the board.
+          </p>
+          <div class="table-scroll">
+            <table class="summary-table" id="hub-summary-table"></table>
           </div>
-          <button type="button" class="btn btn-ghost hidden" id="btn-lead-zoom-reset">↺ Reset zoom</button>
         </div>
       </div>
-      <div id="chart-lead-legend"></div>
-      <div class="chart-wrap" id="chart-lead"></div>
-      <p class="chart-note hidden" id="chart-lead-zoom-note"></p>
-      <p class="chart-note" id="chart-lead-note"></p>
+
+      <div class="dash-box" data-box="stat-grid">
+        <div class="card">
+          <div class="stat-grid" id="hub-stat-grid"></div>
+        </div>
+      </div>
+
+      <div class="dash-box hidden" data-box="feed" id="hub-feed-card">
+        <div class="card">
+          <h2 class="card-title">Claim history</h2>
+          <ul class="feed" id="hub-feed"><li class="feed-empty">No claims yet.</li></ul>
+        </div>
+      </div>
+
+      <!-- Per-click bars -->
+      <div class="dash-box" data-box="chart-clicks">
+        <div class="card">
+          <div class="chart-head">
+            <h2 class="card-title">Every claim</h2>
+            <div class="seg" role="group" aria-label="Sort claims">
+              <button class="seg-btn active" data-clicksort="time">Order clicked</button>
+              <button class="seg-btn" data-clicksort="size">Size</button>
+            </div>
+          </div>
+          <div id="chart-clicks-legend"></div>
+          <div class="chart-wrap" id="chart-clicks"></div>
+          <p class="chart-note">Each bar is one claim. A gold cap marks a 2x claim.</p>
+        </div>
+      </div>
+
+      <!-- Who's winning -->
+      <div class="dash-box" data-box="chart-lead">
+        <div class="card">
+          <div class="chart-head">
+            <h2 class="card-title">Who's winning</h2>
+            <div class="chart-controls">
+              <select id="bucket-size" class="scope-select" aria-label="Time bucket">
+                <option value="1m">Per minute</option>
+                <option value="30m">Per half hour</option>
+                <option value="1h" selected>Per hour</option>
+                <option value="6h">Per 6 hours</option>
+                <option value="1d">Per day</option>
+              </select>
+              <div class="seg" role="group" aria-label="Chart style">
+                <button class="seg-btn active" data-leadstyle="area">Line</button>
+                <button class="seg-btn" data-leadstyle="candle">Candles</button>
+              </div>
+              <button type="button" class="btn btn-ghost hidden" id="btn-lead-zoom-reset">↺ Reset zoom</button>
+            </div>
+          </div>
+          <div id="chart-lead-legend"></div>
+          <div class="chart-wrap" id="chart-lead"></div>
+          <p class="chart-note hidden" id="chart-lead-zoom-note"></p>
+          <p class="chart-note" id="chart-lead-note"></p>
+        </div>
+      </div>
     </div>
 
     <p class="footnote">

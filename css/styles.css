@@ -308,7 +308,7 @@ code { font-family: var(--mono); font-size: .92em; background: rgba(255,255,255,
 
 input[type=date] { color-scheme: dark; }
 
-/* ---------- Box dashboards (profile / game detail) ---------- */
+/* ---------- Box dashboards (hub / profile / game detail) ---------- */
 
 .box-dashboard { display: block; }
 .dash-box { position: relative; }
@@ -316,14 +316,30 @@ input[type=date] { color-scheme: dark; }
 .dash-box-resize { display: none; }
 
 @media (min-width: 900px) {
+  body.screen-hub #app,
   body.screen-profile #app,
   body.screen-detail #app { max-width: 1040px; }
 
+  /* Each dash-col is a vertical stack; the dashboard is a row of 1-3 of
+     them. Dragging a box onto a column stacks it there (pushing the rest
+     of that column down); dragging past the outer edge of the leftmost or
+     rightmost column adds a new one (max 3) — see initDashboard() in
+     app.js. A column that ends up empty is removed automatically (min 1). */
   .box-dashboard {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    align-items: start;
+    display: flex;
+    align-items: flex-start;
     gap: 14px;
+  }
+  .dash-col {
+    flex: 1 1 0;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .dash-col.drag-target {
+    background: rgba(109, 139, 255, .07);
+    border-radius: var(--radius);
   }
   .box-dashboard .card,
   .box-dashboard .section-head { margin-bottom: 0; }
@@ -336,7 +352,6 @@ input[type=date] { color-scheme: dark; }
     overflow: hidden;
     min-height: 40px;
   }
-  .dash-box[data-span="2"] { grid-column: span 2; }
   .dash-box .card { background: transparent; border: none; padding: 0; }
   .dash-box .section-head { padding: 0 2px; }
 
@@ -380,7 +395,6 @@ input[type=date] { color-scheme: dark; }
   }
   .dash-box-handle:hover { background: var(--bg-raise); color: var(--text-dim); }
   .dash-box.dragging { opacity: .45; }
-  .dash-box.drag-over { outline: 2px dashed var(--accent); outline-offset: 2px; }
 
   .dash-box-resize {
     display: block;
@@ -390,7 +404,7 @@ input[type=date] { color-scheme: dark; }
     bottom: 2px;
     width: 16px;
     height: 16px;
-    cursor: nwse-resize;
+    cursor: ns-resize;
     color: var(--text-faint);
     opacity: .6;
     user-select: none;
