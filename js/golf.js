@@ -208,10 +208,14 @@ export function mountGolf(container, seed, round, onDone) {
     draw();
   }
 
+  // Move/up listen on window (not just the canvas) so dragging back past the
+  // canvas edge still updates the aim — easy to do when the tee sits close to
+  // a wall, since it only needs a short pull before the cursor leaves the
+  // canvas. Pointer capture alone isn't a reliable substitute for this.
   canvas.addEventListener("pointerdown", onDown);
-  canvas.addEventListener("pointermove", onMove);
-  canvas.addEventListener("pointerup", onUp);
-  canvas.addEventListener("pointercancel", onUp);
+  window.addEventListener("pointermove", onMove);
+  window.addEventListener("pointerup", onUp);
+  window.addEventListener("pointercancel", onUp);
 
   function onAction(e) {
     const btn = e.target.closest("[data-golf]");
@@ -302,9 +306,9 @@ export function mountGolf(container, seed, round, onDone) {
     destroy() {
       if (raf) cancelAnimationFrame(raf);
       canvas.removeEventListener("pointerdown", onDown);
-      canvas.removeEventListener("pointermove", onMove);
-      canvas.removeEventListener("pointerup", onUp);
-      canvas.removeEventListener("pointercancel", onUp);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
       actions.removeEventListener("click", onAction);
     },
   };
