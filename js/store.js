@@ -445,6 +445,7 @@ async function creditDuelWin(code, duel, settleClaimId, at) {
       status: "settled",
       viaDuel: duel.id,
       game: duel.game || null, // which minigame decided it, for the profile's minigame record
+      ties: (duel.round || 1) - 1, // redraws before it was decided (round starts at 1)
     },
   });
 }

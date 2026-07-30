@@ -712,6 +712,50 @@ function renderMinigameRecord(list) {
       } have a minigame type recorded (from before minigame variety shipped) and won't show up under a specific minigame — only under "All minigames".`
     );
   }
+
+  renderMinigameBreakdown(list, gameFilter);
+}
+
+/**
+ * All-time record broken out per minigame type (rather than one combined
+ * total), so a lopsided coin-flip record doesn't hide behind a good overall
+ * win rate. Always all-time and independent of the minigame-type filter above
+ * — that filter narrows the period table to one type, this shows all of them
+ * side by side.
+ */
+function renderMinigameBreakdown(list, gameFilter) {
+  const byType = {}; // minigame key -> { wins, losses, ties }
+  for (const key of Object.keys(DUEL_META)) byType[key] = { wins: 0, losses: 0, ties: 0 };
+
+  for (const g of list) {
+    if (gameFilter !== "__all__" && g.code !== gameFilter) continue;
+    const meId = myId(g);
+    const opp = opponentOf(g);
+    if (!opp) continue;
+    for (const c of g.claims || []) {
+      if (!c.viaDuel || c.status !== "settled" || !c.game || !byType[c.game]) continue;
+      const won = c.by === meId;
+      if (!won && c.by !== opp.id) continue;
+      if (won) byType[c.game].wins++;
+      else byType[c.game].losses++;
+      byType[c.game].ties += c.ties || 0;
+    }
+  }
+
+  const head = `<thead><tr><th>Minigame</th><th>Wins</th><th>Losses</th><th>Ties</th><th>Win%</th></tr></thead>`;
+  const body =
+    `<tbody>` +
+    Object.entries(DUEL_META)
+      .map(([key, meta]) => {
+        const { wins, losses, ties } = byType[key];
+        const total = wins + losses;
+        const pct = total ? `${Math.round((wins / total) * 100)}%` : "—";
+        return `<tr><td>${meta.icon} ${esc(meta.label)}</td><td class="num">${wins}</td><td class="num">${losses}</td><td class="num">${ties}</td><td class="num">${pct}</td></tr>`;
+      })
+      .join("") +
+    `</tbody>`;
+
+  setHTML("profile-minigame-breakdown", head + body);
 }
 
 // --- Derived helpers --------------------------------------------------------
@@ -816,6 +860,68 @@ function openDuelFor(g) {
   if (!duelUnsettled(d)) return null;
   if (d.challenger !== myId(g) && d.defender !== myId(g)) return null;
   return d;
+}
+
+/**
+ * Duel history for a single (1v1) game: overall record against this
+ * opponent, the individual settled duels (most recent first), and how many
+ * of the most recent claims in a row were contested — a "hot streak" of
+ * disputes rather than clean claims.
+ */
+function duelStatsFor(g) {
+  const meId = myId(g);
+  const opp = opponentOf(g);
+  const claims = g.claims || [];
+
+  const settled = claims.filter((c) => c.status === "settled");
+  let streak = 0;
+  for (let i = settled.length - 1; i >= 0; i--) {
+    if (!settled[i].viaDuel) break;
+    streak++;
+  }
+
+  const history = [];
+  let wins = 0, losses = 0, ties = 0;
+  for (const c of claims) {
+    if (!c.viaDuel || c.status !== "settled") continue;
+    const won = c.by === meId;
+    if (!won && opp && c.by !== opp.id) continue; // shouldn't happen in a 1v1
+    if (won) wins++; else losses++;
+    ties += c.ties || 0;
+    history.push({ at: c.at, game: c.game || null, won, ties: c.ties || 0 });
+  }
+  history.sort((a, b) => b.at - a.at);
+
+  return { wins, losses, ties, streak, history };
+}
+
+/** The game-card badge for a currently-open duel: which minigame, hoverable for the matchup's history. */
+function duelBadgeFor(g, duel) {
+  const meta = DUEL_META[duel.game] || DUEL_META.rps;
+  const opp = opponentOf(g);
+  const stats = duelStatsFor(g);
+
+  const rows = stats.history
+    .slice(0, 8)
+    .map((h) => {
+      const hMeta = h.game ? DUEL_META[h.game] : null;
+      const label = hMeta ? `${hMeta.icon} ${hMeta.label}` : "Unknown minigame";
+      const tieNote = h.ties ? ` · ${h.ties} tie${h.ties === 1 ? "" : "s"} first` : "";
+      return `<li class="${h.won ? "win" : "loss"}">${h.won ? "You won" : `${esc(opp?.name || "They")} won`} — ${esc(label)}${tieNote}</li>`;
+    })
+    .join("");
+
+  return `
+    <span class="gc-flag duel gc-duel-badge" tabindex="0">
+      ${meta.icon} ${esc(meta.label)}
+      <div class="gc-duel-tip">
+        <div class="gc-duel-tip-record">
+          <span class="win">${stats.wins}W</span> · <span class="loss">${stats.losses}L</span> · <span class="tie">${stats.ties} tie${stats.ties === 1 ? "" : "s"}</span>
+        </div>
+        ${stats.streak > 1 ? `<div class="gc-duel-tip-streak">⚔ ${stats.streak} contested claims in a row</div>` : ""}
+        ${rows ? `<ul class="gc-duel-tip-list">${rows}</ul>` : `<p class="gc-duel-tip-empty">No past duels yet — this is the first.</p>`}
+      </div>
+    </span>`;
 }
 
 /** Duels I'm in that need an action from me — these block the claim button. */
@@ -1180,10 +1286,17 @@ function renderHub() {
 
 function renderGameList() {
   const host = $("game-list");
+  // Ticking fields (clock, cooldown, catch-up countdown) change every 200ms
+  // and used to be baked into the signature string below, so the whole list
+  // got torn down and rebuilt ~5x/second — killing hover state and eating
+  // clicks mid-interaction. `sig` excludes those so a rebuild only happens on
+  // an actual structural change; the ticking text is patched in place after.
+  const sigKeys = [];
   const html = roster
     .map((entry) => {
       const g = games.get(entry.code);
       if (!g || !g.meta) {
+        sigKeys.push(`${entry.code}|loading`);
         return `<div class="game-card loading">
                 <div class="gc-main"><div class="gc-name">${esc(entry.code)}</div>
                 <div class="gc-sub">loading…</div></div>
@@ -1252,13 +1365,23 @@ function renderGameList() {
         }
       }
 
+      // Only these decide whether the DOM needs to be torn down and rebuilt;
+      // seconds-precision countdown text is intentionally left out so a
+      // rebuild doesn't happen every tick (see note above renderGameList).
+      sigKeys.push([
+        g.code, over, duel, hot, synced, !!opp, mine, theirs, oppOnline,
+        status ? status.cls : "", catchUp ? `${catchUp.final}|${catchUp.forMe}|${catchUp.leftMs < 3600e3}` : "",
+      ].join("|"));
+
+      const duelBadgeHtml = duel ? duelBadgeFor(g, duel) : "";
+
       return `
       <div class="game-card ${over ? "over" : ""} ${duel ? "duel" : ""}" data-code="${esc(g.code)}">
         <div class="gc-main" data-open="${esc(g.code)}">
           <div class="gc-head">
             <span class="gc-name">${esc(gameLabel(g))}</span>
             ${hot ? '<span class="gc-flag hot">2x</span>' : ""}
-            ${duel ? '<span class="gc-flag duel">DUEL</span>' : ""}
+            ${duelBadgeHtml}
             ${over ? '<span class="gc-flag over">ENDED</span>' : ""}
           </div>
           <div class="gc-bar">
@@ -1277,9 +1400,9 @@ function renderGameList() {
           </div>
           ${status ? `<div class="gc-status gc-status-${status.cls}">${status.text}</div>` : ""}
           <div class="gc-sub">
-            ${over ? "" : `<span class="gc-clock">${fmtDuration(onClock(g))} on the clock</span> · `}${deadline}
+            ${over ? "" : `<span class="gc-clock">${fmtDuration(onClock(g))} on the clock</span> · `}<span class="gc-deadline">${deadline}</span>
           </div>
-          ${catchUpHtml}
+          <div class="gc-catchup-wrap">${catchUpHtml}</div>
         </div>
         <button class="sync-toggle ${synced ? "on" : ""}" data-sync="${esc(g.code)}"
                 title="${synced ? "Synced — clicks land here" : "Not synced"}"
@@ -1290,9 +1413,10 @@ function renderGameList() {
       </div>`;
     })
     .join("");
+  const sig = sigKeys.join(",,");
 
-  if (host.dataset.sig !== html) {
-    host.dataset.sig = html;
+  if (host.dataset.sig !== sig) {
+    host.dataset.sig = sig;
     host.innerHTML = html;
     host.querySelectorAll("[data-sync]").forEach((b) =>
       b.addEventListener("click", (e) => {
@@ -1313,6 +1437,60 @@ function renderGameList() {
       })
     );
   }
+
+  // Patch ticking text in place every call (rebuild or not) so the countdown
+  // still updates live without recreating any nodes — that's what keeps
+  // hover/click stable while a card is under the cursor.
+  roster.forEach((entry) => {
+    const g = games.get(entry.code);
+    if (!g || !g.meta) return;
+    const card = host.querySelector(`[data-code="${CSS.escape(g.code)}"]`);
+    if (!card) return;
+    const over = isOver(g);
+
+    const clockEl = card.querySelector(".gc-clock");
+    if (clockEl) clockEl.textContent = `${fmtDuration(onClock(g))} on the clock`;
+
+    const remain = g.meta.endsAt - db.now();
+    const deadline = over
+      ? "ended"
+      : remain < 86400e3
+        ? `${Math.max(0, Math.floor(remain / 3600e3))}h left`
+        : `${Math.ceil(remain / 86400e3)}d left`;
+    const deadlineEl = card.querySelector(".gc-deadline");
+    if (deadlineEl) deadlineEl.textContent = deadline;
+
+    const statusEl = card.querySelector(".gc-status");
+    if (statusEl) {
+      const cdLeft = cooldownLeft(g);
+      if (!over && cdLeft > 0) statusEl.textContent = `Ready in ${(cdLeft / 1000).toFixed(1)}s`;
+    }
+
+    const catchUp = over ? null : catchUpWindow(g);
+    const catchUpWrap = card.querySelector(".gc-catchup-wrap");
+    if (catchUp && catchUpWrap) {
+      const opp = opponentOf(g);
+      let catchUpHtml = "";
+      if (catchUp.final) {
+        catchUpHtml = catchUp.forMe
+          ? `<div class="gc-catchup lost">You can no longer catch up.</div>`
+          : `<div class="gc-catchup safe">${esc(opp?.name || "They")} can no longer catch up.</div>`;
+      } else if (catchUp.forMe) {
+        const urgent = catchUp.leftMs < 3600e3;
+        catchUpHtml = `<div class="gc-catchup ${urgent ? "urgent" : ""}">
+          ${fmtDuration(catchUp.leftMs / 1000)} left to catch up before it's unwinnable</div>`;
+      } else {
+        catchUpHtml = `<div class="gc-catchup safe">
+          ${esc(opp?.name || "They")} have ${fmtDuration(catchUp.leftMs / 1000)} left to catch up</div>`;
+      }
+      if (!catchUp.final) {
+        catchUpHtml += catchUp.forMe
+          ? `<div class="gc-clinch">${esc(opp?.name || "They")} win outright with ${fmtDuration(catchUp.theyNeed)} more</div>`
+          : `<div class="gc-clinch">You win outright with ${fmtDuration(catchUp.youNeed)} more</div>`;
+      }
+      catchUpWrap.innerHTML = catchUpHtml;
+    }
+  });
 }
 
 // --- Rejoin list (setup screen) ---------------------------------------------
