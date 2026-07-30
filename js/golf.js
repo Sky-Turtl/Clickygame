@@ -147,13 +147,22 @@ export function mountGolf(container, seed, round, onDone) {
       ctx.fill();
     }
     if ((dragging || pending) && dragTo) {
-      const pullPower = Math.hypot(dragTo.x - ball.x, dragTo.y - ball.y) / MAX_PULL;
-      ctx.strokeStyle = "rgba(255,255,255,.55)";
-      ctx.lineWidth = 2 + pullPower * 6;
-      ctx.beginPath();
-      ctx.moveTo(ball.x, ball.y);
-      ctx.lineTo(dragTo.x, dragTo.y);
-      ctx.stroke();
+      const dx = dragTo.x - ball.x;
+      const dy = dragTo.y - ball.y;
+      const dist = Math.hypot(dx, dy);
+      const pullPower = dist / MAX_PULL;
+      if (dist > 0.001) {
+        const halfWidth = 1 + pullPower * 4;
+        const px = (-dy / dist) * halfWidth;
+        const py = (dx / dist) * halfWidth;
+        ctx.fillStyle = "rgba(255,255,255,.55)";
+        ctx.beginPath();
+        ctx.moveTo(ball.x, ball.y);
+        ctx.lineTo(dragTo.x + px, dragTo.y + py);
+        ctx.lineTo(dragTo.x - px, dragTo.y - py);
+        ctx.closePath();
+        ctx.fill();
+      }
     }
     ctx.beginPath();
     ctx.fillStyle = "#fff";
