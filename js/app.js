@@ -578,19 +578,22 @@ function renderProfile() {
   const ties = count("tie");
   const ongoing = count("ongoing");
 
-  $("profile-record").innerHTML = [
-    ["Wins", String(wins)],
-    ["Losses", String(losses)],
-    ["Ties", String(ties)],
-    ["Ongoing", String(ongoing)],
-  ]
-    .map(
-      ([l, v]) =>
-        `<div class="stat"><div class="stat-label">${l}</div><div class="stat-value">${v}</div></div>`
-    )
-    .join("");
+  setHTML(
+    "profile-record",
+    [
+      ["Wins", String(wins)],
+      ["Losses", String(losses)],
+      ["Ties", String(ties)],
+      ["Ongoing", String(ongoing)],
+    ]
+      .map(
+        ([l, v]) =>
+          `<div class="stat"><div class="stat-label">${l}</div><div class="stat-value">${v}</div></div>`
+      )
+      .join("")
+  );
 
-  $("profile-games").innerHTML =
+  const gamesHtml =
     results
       .map(({ g, result }) => {
         const { rows } = totalsFor(g);
@@ -613,9 +616,14 @@ function renderProfile() {
       })
       .join("") || `<p class="card-sub">No games yet.</p>`;
 
-  $("profile-games").querySelectorAll("[data-open]").forEach((el) =>
-    el.addEventListener("click", () => openDetail(el.dataset.open))
-  );
+  const gamesHost = $("profile-games");
+  if (gamesHost.dataset.sig !== gamesHtml) {
+    gamesHost.dataset.sig = gamesHtml;
+    gamesHost.innerHTML = gamesHtml;
+    gamesHost.querySelectorAll("[data-open]").forEach((el) =>
+      el.addEventListener("click", () => openDetail(el.dataset.open))
+    );
+  }
 
   renderMinigameRecord(list);
 }
