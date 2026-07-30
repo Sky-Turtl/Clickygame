@@ -2431,7 +2431,7 @@ function renderFeed(hostId, g, limit) {
                 <span class="f-who">${esc(who)}</span>
                 <span class="f-amt">${fmtDuration(run.seconds)}</span>
                 ${tags}
-                <span class="f-when">${fmtAgo(db.now() - run.to)}</span>
+                <span class="f-when" data-when="${run.to}"></span>
               </li>`;
             }
 
@@ -2444,7 +2444,7 @@ function renderFeed(hostId, g, limit) {
                   <span class="f-amt">${fmtDuration(i.seconds)}</span>
                   ${i.multiplier > 1 ? '<span class="f-tag x2">2x</span>' : ""}
                   ${i.viaDuel ? (i.game ? duelTag(g, i) : '<span class="f-tag duel">DUEL</span>') : ""}
-                  <span class="f-when">${fmtAgo(db.now() - i.at)}</span>
+                  <span class="f-when" data-when="${i.at}"></span>
                 </li>`
               )
               .join("");
@@ -2457,7 +2457,7 @@ function renderFeed(hostId, g, limit) {
                   <span class="f-amt">${fmtDuration(run.seconds)}</span>
                   <span class="f-count">${run.count} clicks</span>
                   ${tags}
-                  <span class="f-when">${fmtAgo(db.now() - run.to)}</span>
+                  <span class="f-when" data-when="${run.to}"></span>
                 </summary>
                 <ul class="splits">${splits}</ul>
               </details>
@@ -2466,6 +2466,14 @@ function renderFeed(hostId, g, limit) {
           .join("")
       : `<li class="feed-empty">No claims yet.</li>`
   );
+
+  // Patched in place every call (rebuild or not) — baking the "…ago" text
+  // straight into the html would change the string every tick, forcing
+  // setHTML to tear down and rebuild the whole list each time and killing
+  // hover state on anything under the cursor (e.g. the duel tag tooltip).
+  host.querySelectorAll("[data-when]").forEach((el) => {
+    el.textContent = fmtAgo(db.now() - Number(el.dataset.when));
+  });
 }
 
 function wireDetail() {
