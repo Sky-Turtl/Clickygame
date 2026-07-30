@@ -367,9 +367,12 @@ function initDashboard(dashId, screenKey) {
     });
   }
 
-  // Delegated at the dashboard level (not per-box) so it can also handle
-  // cross-column moves and spinning up a new column at the outer edges.
-  dash.addEventListener("dragover", (e) => {
+  // Delegated on document (not the dash element) because dragover stops
+  // firing on `dash` the instant the pointer crosses its own outer edge —
+  // which is exactly where the "drag past the edge to add a column" check
+  // needs to fire. `dragging` is scoped to this dashboard's closure, so
+  // other dashboards' listeners no-op while this one is idle.
+  document.addEventListener("dragover", (e) => {
     if (!dragging) return;
     e.preventDefault();
 
@@ -408,7 +411,7 @@ function initDashboard(dashId, screenKey) {
 
     pruneEmptyDashColumns(dash);
   });
-  dash.addEventListener("drop", (e) => e.preventDefault());
+  document.addEventListener("drop", (e) => { if (dragging) e.preventDefault(); });
 }
 
 function initProfileDashboard() { initDashboard("profile-dashboard", "profile"); }
