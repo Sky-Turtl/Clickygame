@@ -184,8 +184,11 @@ function showScreen(which) {
 //   - a "wide" row below .dash-cols: boxes dragged there (or resized far
 //     enough to the right) go full dashboard width instead of living in a
 //     column.
-// Layout — column contents, which boxes are wide, and any explicit height —
-// is saved locally and, if signed in, to the account.
+// A draggable splitter (.dash-col-split) sits between adjacent columns for
+// horizontal resizing; a "Reset layout" button (.dash-reset) clears the
+// saved layout back to the default.
+// Layout — column contents, widths, which boxes are wide, and any explicit
+// height — is saved locally and, if signed in, to the account.
 
 const DASH_LAYOUT_KEY = "clicky-dashboard-layout-v2";
 const DASH_MIN_COLS = 1;
@@ -214,13 +217,14 @@ function saveDashboardLayout() {
   if (account) db.setAccountDashboardLayout(account.uid, dashboardLayout).catch(() => {});
 }
 
-/** Normalizes a saved entry to {cols, wide, heights}, migrating the old flat-array shape from before columns existed. */
+/** Normalizes a saved entry to {cols, wide, heights, colWidths}, migrating the old flat-array shape from before columns existed. */
 function normalizeDashEntry(entry) {
   if (entry && Array.isArray(entry.cols)) {
     return {
       cols: entry.cols.map((c) => [...c]),
       wide: [...(entry.wide || [])],
       heights: { ...(entry.heights || {}) },
+      colWidths: [...(entry.colWidths || [])],
     };
   }
   if (Array.isArray(entry)) {
@@ -230,18 +234,22 @@ function normalizeDashEntry(entry) {
       cols[i % DASH_DEFAULT_COLS].push(e.id);
       if (e.height) heights[e.id] = e.height;
     });
-    return { cols, wide: [], heights };
+    return { cols, wide: [], heights, colWidths: [] };
   }
   return null;
 }
 
 function captureDashLayout(dash, screenKey) {
   const colsWrap = dash.querySelector(":scope > .dash-cols");
-  const cols = colsWrap
-    ? [...colsWrap.querySelectorAll(":scope > .dash-col")]
-        .map((col) => [...col.querySelectorAll(":scope > .dash-box")].map((b) => b.dataset.box))
-        .filter((c) => c.length)
-    : [];
+  const colEls = colsWrap ? [...colsWrap.querySelectorAll(":scope > .dash-col")] : [];
+  const cols = [];
+  const colWidths = [];
+  for (const col of colEls) {
+    const ids = [...col.querySelectorAll(":scope > .dash-box")].map((b) => b.dataset.box);
+    if (!ids.length) continue;
+    cols.push(ids);
+    colWidths.push(col.dataset.customWidth ? Math.round(col.getBoundingClientRect().width) : null);
+  }
   const wide = [...dash.querySelectorAll(":scope > .dash-box")].map((b) => b.dataset.box);
   const heights = {};
   for (const box of dash.querySelectorAll(".dash-box")) {
@@ -251,6 +259,7 @@ function captureDashLayout(dash, screenKey) {
     cols: cols.length || wide.length ? cols : [[...dash.querySelectorAll(".dash-box")].map((b) => b.dataset.box)],
     wide,
     heights,
+    colWidths,
   };
   saveDashboardLayout();
 }
@@ -265,7 +274,7 @@ function applyDashLayout(dash, screenKey) {
   if (!layout) {
     const cols = Array.from({ length: DASH_DEFAULT_COLS }, () => []);
     boxIds.forEach((id, i) => cols[i % DASH_DEFAULT_COLS].push(id));
-    layout = { cols, wide: [], heights: {} };
+    layout = { cols, wide: [], heights: {}, colWidths: [] };
   }
 
   // Drop stale/duplicate ids, then place any box the layout doesn't know
@@ -305,6 +314,14 @@ function applyDashLayout(dash, screenKey) {
   while (cols.length > layout.cols.length) cols.pop().remove();
 
   layout.cols.forEach((ids, i) => {
+    const width = layout.colWidths && layout.colWidths[i];
+    if (width) {
+      cols[i].style.flex = `0 0 ${width}px`;
+      cols[i].dataset.customWidth = "1";
+    } else {
+      cols[i].style.flex = "";
+      delete cols[i].dataset.customWidth;
+    }
     for (const id of ids) {
       const box = boxMap.get(id);
       cols[i].appendChild(box);
@@ -317,15 +334,71 @@ function applyDashLayout(dash, screenKey) {
     dash.appendChild(box); // after colsWrap, in saved order
     if (layout.heights[id]) box.style.height = layout.heights[id];
   }
+
+  layoutDashSplitters(dash, screenKey);
 }
 
-function pruneEmptyDashColumns(dash) {
+const DASH_MIN_COL_WIDTH = 160;
+
+/** Rebuilds the draggable splitters between columns so neighboring columns can be resized horizontally. */
+function layoutDashSplitters(dash, screenKey) {
   const colsWrap = dash.querySelector(":scope > .dash-cols");
   if (!colsWrap) return;
+  colsWrap.querySelectorAll(":scope > .dash-col-split").forEach((s) => s.remove());
+
+  const cols = [...colsWrap.querySelectorAll(":scope > .dash-col")];
+  for (let i = 0; i < cols.length - 1; i++) {
+    const colA = cols[i];
+    const colB = cols[i + 1];
+    const split = document.createElement("div");
+    split.className = "dash-col-split";
+    colsWrap.insertBefore(split, colB);
+
+    split.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      split.setPointerCapture(e.pointerId);
+      const startX = e.clientX;
+      const startWidthA = colA.getBoundingClientRect().width;
+      const startWidthB = colB.getBoundingClientRect().width;
+
+      const onMove = (ev) => {
+        const dx = ev.clientX - startX;
+        const widthA = Math.max(DASH_MIN_COL_WIDTH, startWidthA + dx);
+        const widthB = Math.max(DASH_MIN_COL_WIDTH, startWidthB - dx);
+        colA.style.flex = `0 0 ${widthA}px`;
+        colA.dataset.customWidth = "1";
+        colB.style.flex = `0 0 ${widthB}px`;
+        colB.dataset.customWidth = "1";
+      };
+      const onUp = (ev) => {
+        split.releasePointerCapture(ev.pointerId);
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        captureDashLayout(dash, screenKey);
+      };
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    });
+  }
+}
+
+function pruneEmptyDashColumns(dash, screenKey) {
+  const colsWrap = dash.querySelector(":scope > .dash-cols");
+  if (!colsWrap) return;
+  let changed = false;
   for (const col of [...colsWrap.querySelectorAll(":scope > .dash-col")]) {
     if (colsWrap.querySelectorAll(":scope > .dash-col").length <= DASH_MIN_COLS) break;
-    if (!col.querySelector(":scope > .dash-box")) col.remove();
+    if (!col.querySelector(":scope > .dash-box")) { col.remove(); changed = true; }
   }
+  if (changed && screenKey) layoutDashSplitters(dash, screenKey);
+}
+
+/** Clears a dashboard's saved layout (columns, wide row, heights, widths) back to the default arrangement. */
+function resetDashLayout(dash, screenKey) {
+  delete dashboardLayout[screenKey];
+  saveDashboardLayout();
+  for (const box of dash.querySelectorAll(".dash-box")) box.style.height = "";
+  applyDashLayout(dash, screenKey);
 }
 
 /** Wires up drag-to-rearrange + resize for a dashboard's boxes (desktop only; a no-op on repeat calls). */
@@ -335,6 +408,16 @@ function initDashboard(dashId, screenKey) {
   applyDashLayout(dash, screenKey);
   if (dashInited.has(dashId)) return;
   dashInited.add(dashId);
+
+  if (!dash.querySelector(":scope > .dash-reset")) {
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.className = "dash-reset";
+    resetBtn.title = "Reset layout";
+    resetBtn.textContent = "Reset layout";
+    resetBtn.addEventListener("click", () => resetDashLayout(dash, screenKey));
+    dash.prepend(resetBtn);
+  }
 
   let dragging = null;
 
@@ -374,7 +457,7 @@ function initDashboard(dashId, screenKey) {
       dragging = null;
       const colsWrap = dash.querySelector(":scope > .dash-cols");
       if (colsWrap) for (const c of colsWrap.querySelectorAll(".dash-col")) c.classList.remove("drag-target");
-      pruneEmptyDashColumns(dash);
+      pruneEmptyDashColumns(dash, screenKey);
       captureDashLayout(dash, screenKey);
     });
 
@@ -400,7 +483,7 @@ function initDashboard(dashId, screenKey) {
         resizer.releasePointerCapture(ev.pointerId);
         document.removeEventListener("pointermove", onMove);
         document.removeEventListener("pointerup", onUp);
-        pruneEmptyDashColumns(dash);
+        pruneEmptyDashColumns(dash, screenKey);
         captureDashLayout(dash, screenKey);
       };
       document.addEventListener("pointermove", onMove);
@@ -431,7 +514,7 @@ function initDashboard(dashId, screenKey) {
       const before = wideBoxes.find((b) => y < b.getBoundingClientRect().top + b.getBoundingClientRect().height / 2);
       if (before) dash.insertBefore(dragging, before);
       else dash.appendChild(dragging);
-      pruneEmptyDashColumns(dash);
+      pruneEmptyDashColumns(dash, screenKey);
       return;
     }
     if (!cols.length) return;
@@ -439,15 +522,32 @@ function initDashboard(dashId, screenKey) {
     const firstRect = cols[0].getBoundingClientRect();
     const lastRect = cols[cols.length - 1].getBoundingClientRect();
 
+    // A drag that lingers past an outer edge fires this handler on every
+    // animation frame. If the edge column already holds nothing but the box
+    // being dragged, it *is* the new column from an earlier frame — reuse it
+    // instead of spinning up another, which would otherwise create/prune a
+    // fresh column every tick and could drop the box mid-thrash.
+    const isSoloDragging = (col) => col.children.length === 1 && col.firstElementChild === dragging;
+
     let targetCol;
-    if (x < firstRect.left - DASH_EDGE_PX && cols.length < DASH_MAX_COLS) {
-      targetCol = document.createElement("div");
-      targetCol.className = "dash-col";
-      colsWrap.insertBefore(targetCol, cols[0]);
-    } else if (x > lastRect.right + DASH_EDGE_PX && cols.length < DASH_MAX_COLS) {
-      targetCol = document.createElement("div");
-      targetCol.className = "dash-col";
-      colsWrap.appendChild(targetCol);
+    if (x < firstRect.left - DASH_EDGE_PX && (cols.length < DASH_MAX_COLS || isSoloDragging(cols[0]))) {
+      if (isSoloDragging(cols[0])) {
+        targetCol = cols[0];
+      } else {
+        targetCol = document.createElement("div");
+        targetCol.className = "dash-col";
+        colsWrap.insertBefore(targetCol, cols[0]);
+        layoutDashSplitters(dash, screenKey);
+      }
+    } else if (x > lastRect.right + DASH_EDGE_PX && (cols.length < DASH_MAX_COLS || isSoloDragging(cols[cols.length - 1]))) {
+      if (isSoloDragging(cols[cols.length - 1])) {
+        targetCol = cols[cols.length - 1];
+      } else {
+        targetCol = document.createElement("div");
+        targetCol.className = "dash-col";
+        colsWrap.appendChild(targetCol);
+        layoutDashSplitters(dash, screenKey);
+      }
     } else {
       let bestDist = Infinity;
       for (const col of cols) {
@@ -463,7 +563,7 @@ function initDashboard(dashId, screenKey) {
     if (before) targetCol.insertBefore(dragging, before);
     else targetCol.appendChild(dragging);
 
-    pruneEmptyDashColumns(dash);
+    pruneEmptyDashColumns(dash, screenKey);
   });
   document.addEventListener("drop", (e) => { if (dragging) e.preventDefault(); });
 }
