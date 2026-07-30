@@ -2043,81 +2043,15 @@ function pingDuelActivity(code, duelId) {
   db.pingDuelActivity(code, duelId);
 }
 
-/**
- * All active duels share one overlay so multiple at once don't stack
- * full-screen on top of each other — a scroll-snapping track of cards, side
- * by side on wide screens, swipe/arrow-through on narrow ones.
- */
-function duelOverlay() {
-  let overlay = $("duel-overlay");
-  if (overlay) return overlay;
-
-  const host = $("rps-host");
-  overlay = document.createElement("div");
-  overlay.id = "duel-overlay";
-  overlay.className = "modal-backdrop duel-overlay hidden";
-  overlay.innerHTML = `
-    <div class="duel-carousel">
-      <button type="button" class="duel-nav prev hidden" aria-label="Previous duel">‹</button>
-      <div class="duel-track" data-el="track"></div>
-      <button type="button" class="duel-nav next hidden" aria-label="Next duel">›</button>
-    </div>
-    <p class="duel-counter hidden" data-el="counter"></p>`;
-  host.appendChild(overlay);
-
-  const track = overlay.querySelector('[data-el="track"]');
-  overlay.querySelector(".prev").addEventListener("click", () => scrollDuelTrack(track, -1));
-  overlay.querySelector(".next").addEventListener("click", () => scrollDuelTrack(track, 1));
-  track.addEventListener("scroll", () => updateDuelCounter(overlay), { passive: true });
-  return overlay;
-}
-
-function scrollDuelTrack(track, dir) {
-  const width = track.firstElementChild ? track.firstElementChild.getBoundingClientRect().width + 14 : track.clientWidth;
-  track.scrollBy({ left: dir * width, behavior: "smooth" });
-}
-
-function updateDuelCounter(overlay) {
-  const track = overlay.querySelector('[data-el="track"]');
-  const counterEl = overlay.querySelector('[data-el="counter"]');
-  const navEls = overlay.querySelectorAll(".duel-nav");
-  const cards = [...track.children];
-
-  navEls.forEach((btn) => btn.classList.toggle("hidden", cards.length <= 1));
-  if (cards.length <= 1) {
-    counterEl.classList.add("hidden");
-    return;
-  }
-
-  const trackMid = track.getBoundingClientRect().left + track.clientWidth / 2;
-  let idx = 0;
-  let best = Infinity;
-  cards.forEach((c, i) => {
-    const r = c.getBoundingClientRect();
-    const dist = Math.abs(r.left + r.width / 2 - trackMid);
-    if (dist < best) {
-      best = dist;
-      idx = i;
-    }
-  });
-  counterEl.classList.remove("hidden");
-  counterEl.textContent = `Duel ${idx + 1} of ${cards.length}`;
-}
-
 function renderDuelModal() {
-  const overlay = duelOverlay();
-  const track = overlay.querySelector('[data-el="track"]');
+  const host = $("rps-host");
   const entries = allActiveDuels();
 
-  overlay.classList.toggle("hidden", entries.length === 0);
-
-  // Remove cards for duels that are no longer active.
+  // Remove modals for duels that are no longer active.
   const activeKeys = new Set(entries.map((e) => `duel-${e.g.code}-${e.duel.id}`));
-  for (const el of [...track.children]) {
+  for (const el of [...host.children]) {
     if (!activeKeys.has(el.id)) el.remove();
   }
-
-  const newlyOpened = [];
 
   for (const entry of entries) {
     const { g, duel: d } = entry;
@@ -2131,26 +2065,26 @@ function renderDuelModal() {
     let card = $(key);
     if (!card) {
       card = document.createElement("div");
-      card.className = "modal duel-card";
+      card.className = "modal-backdrop";
       card.id = key;
-      card.setAttribute("role", "dialog");
-      card.setAttribute("aria-modal", "true");
       card.innerHTML = `
-        <h2>⚔️ Contested claim</h2>
-        <p class="duel-game" data-el="game"></p>
-        <p class="duel-minigame" data-el="minigame"></p>
-        <p class="modal-sub" data-el="sub"></p>
-        <div class="pot" data-el="pot"></div>
-        <div class="duel-picker" data-el="picker"></div>
-        <p class="modal-status" data-el="status"></p>
-        <p class="modal-timeout hidden" data-el="countdown"></p>
-        <div class="rps-result hidden" data-el="result"></div>
-        <div class="modal-actions">
-          <div class="spacer"></div>
-          <button type="button" class="btn btn-ghost hidden" data-el="dismiss">Close</button>
-        </div>
-        <p class="modal-lock" data-el="lock">You can't claim again until you've made your move.</p>`;
-      track.appendChild(card);
+        <div class="modal" role="dialog" aria-modal="true">
+          <h2>⚔️ Contested claim</h2>
+          <p class="duel-game" data-el="game"></p>
+          <p class="duel-minigame" data-el="minigame"></p>
+          <p class="modal-sub" data-el="sub"></p>
+          <div class="pot" data-el="pot"></div>
+          <div class="duel-picker" data-el="picker"></div>
+          <p class="modal-status" data-el="status"></p>
+          <p class="modal-timeout hidden" data-el="countdown"></p>
+          <div class="rps-result hidden" data-el="result"></div>
+          <div class="modal-actions">
+            <div class="spacer"></div>
+            <button type="button" class="btn btn-ghost hidden" data-el="dismiss">Close</button>
+          </div>
+          <p class="modal-lock" data-el="lock">You can't claim again until you've made your move.</p>
+        </div>`;
+      host.appendChild(card);
       newlyOpened.push(card);
 
       // Wire the picker once and read live duel state at click time — the
@@ -2213,7 +2147,6 @@ function renderDuelModal() {
         const curDuel = cur?.state?.duel;
         if (curDuel?.status === "resolved") dismissedResults.add(curDuel.id);
         card.remove();
-        updateDuelCounter(overlay);
         render();
       });
     }
@@ -2375,11 +2308,6 @@ function renderDuelModal() {
       countdownEl.textContent =
         remaining > 0 ? `Auto-resolves in ${fmtCountdown(remaining)} if unanswered.` : "Resolving…";
     }
-  }
-
-  updateDuelCounter(overlay);
-  if (newlyOpened.length) {
-    newlyOpened[newlyOpened.length - 1].scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
   }
 }
 
