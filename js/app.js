@@ -96,6 +96,7 @@ let lastClaimIds = new Map(); // code -> last claim id we've already put in the 
 
 // Chart controls
 let clickSort = store.get("clickSort", "time"); // "time" | "size"
+let mergeClicks = store.get("mergeClicks", false); // collapse same-player streaks into one bar
 let leadStyle = store.get("leadStyle", "area"); // "area" | "candle"
 let bucketKey = store.get("bucketKey", "1h");
 /** Click-to-zoom on the "who's winning" chart: {start, end} in ms, or null for the full view. */
@@ -837,6 +838,16 @@ function renderProfile() {
   const ties = count("tie");
   const ongoing = count("ongoing");
 
+  let bonusSeconds = 0;
+  for (const g of list) {
+    const meId = myId(g);
+    for (const c of g.claims || []) {
+      if (c.status === "settled" && c.by === meId && (c.multiplier || 1) > 1) {
+        bonusSeconds += (c.seconds || 0) - (c.rawSeconds || 0);
+      }
+    }
+  }
+
   setHTML(
     "profile-record",
     [
@@ -844,6 +855,7 @@ function renderProfile() {
       ["Losses", String(losses)],
       ["Ties", String(ties)],
       ["Ongoing", String(ongoing)],
+      ["Bonus time gained", fmtDuration(bonusSeconds)],
     ]
       .map(
         ([l, v]) =>
@@ -1032,7 +1044,7 @@ function renderMinigameBreakdown(list, gameFilter) {
       if (won) byType[c.game].wins++;
       else byType[c.game].losses++;
       byType[c.game].ties += c.ties || 0;
-      byType[c.game].entries.push({ at: c.at, seconds: c.seconds || 0, won, meId, mgd: c.mgDetail || null });
+      byType[c.game].entries.push({ at: c.at, seconds: c.seconds || 0, won, meId, ties: c.ties || 0, mgd: c.mgDetail || null });
     }
   }
 
@@ -1097,50 +1109,91 @@ function minigameDetailHtml(key, entries) {
 
   switch (key) {
     case "dice": {
-      const rolls = tracked.map((e) => mine(e, "rollA", "rollB")).filter((v) => Number.isFinite(v));
+      const rollOf = (e) => mine(e, "rollA", "rollB");
+      const rolls = tracked.map(rollOf).filter((v) => Number.isFinite(v));
       if (!rolls.length) return note || `<p class="mg-empty">No rolls recorded.</p>`;
+      const perRoll = [1, 2, 3, 4, 5, 6]
+        .map((n) => {
+          const mineOfN = tracked.filter((e) => rollOf(e) === n);
+          const wins = mineOfN.filter((e) => e.won).length;
+          const pct = mineOfN.length ? `${Math.round((wins / mineOfN.length) * 100)}%` : "—";
+          return mgStat(`Rolled ${n} winrate`, `${pct} (${mineOfN.length})`);
+        })
+        .join("");
       return (
         mgStat("Most rolled", mode(rolls)) +
         mgStat("Average roll", mean(rolls).toFixed(2)) +
         mgStat("Rolls tracked", rolls.length) +
+        perRoll +
         note
       );
     }
     case "golf": {
-      const dists = tracked.map((e) => mine(e, "distA", "distB")).filter((v) => Number.isFinite(v));
+      const distOf = (e) => mine(e, "distA", "distB");
+      const dists = tracked.map(distOf).filter((v) => Number.isFinite(v));
       if (!dists.length) return note || `<p class="mg-empty">No putts recorded.</p>`;
-      const holesMade = dists.filter((d) => d === 0).length;
-      let bestStreak = 0,
-        cur = 0;
-      for (const e of tracked.slice().sort((a, b) => a.at - b.at)) {
+      const totalHolesMade = dists.filter((d) => d === 0).length;
+      const sorted = tracked.slice().sort((a, b) => a.at - b.at);
+      let bestWinStreak = 0,
+        curWin = 0;
+      let highestStreak = 0,
+        curMade = 0;
+      let firstHoleStreak = 0,
+        curFirstHole = 0;
+      for (const e of sorted) {
         if (e.won) {
-          cur++;
-          bestStreak = Math.max(bestStreak, cur);
-        } else cur = 0;
+          curWin++;
+          bestWinStreak = Math.max(bestWinStreak, curWin);
+        } else curWin = 0;
+
+        const made = distOf(e) === 0;
+        if (made) {
+          curMade++;
+          highestStreak = Math.max(highestStreak, curMade);
+        } else curMade = 0;
+
+        if (made && (e.ties || 0) === 0) {
+          curFirstHole++;
+          firstHoleStreak = Math.max(firstHoleStreak, curFirstHole);
+        } else curFirstHole = 0;
       }
       return (
-        mgStat("Holes made", holesMade) +
-        mgStat("Best win streak", bestStreak) +
-        mgStat("Closest putt", `${Math.round(Math.min(...dists))} from the hole`) +
+        mgStat("Total holes made", totalHolesMade) +
+        mgStat("Highest streak", highestStreak) +
+        mgStat("Longest streak of 1st hole made", firstHoleStreak) +
+        mgStat("Best win streak", bestWinStreak) +
         mgStat("Furthest miss", `${Math.round(Math.max(...dists))} from the hole`) +
         mgStat("Average distance", Math.round(mean(dists))) +
         note
       );
     }
     case "coin": {
+      const longestTieStreak = entries.length ? Math.max(...entries.map((e) => e.ties || 0)) : 0;
       const doubles = tracked.filter((e) => e.mgd.doubled && e.mgd.doubler === e.meId);
       const doublesWon = doubles.filter((e) => !e.mgd.doubleLost);
       const gained = doublesWon.reduce((s, e) => s + (e.seconds - (e.mgd.potSeconds || 0)), 0);
+      const perCall = ["heads", "tails"]
+        .map((side) => {
+          const mineOfSide = tracked.filter((e) => e.mgd.picks?.[e.meId] === side);
+          const wins = mineOfSide.filter((e) => e.won).length;
+          const losses = mineOfSide.length - wins;
+          return mgStat(`${side === "heads" ? "🪙 Heads" : "🪙 Tails"} record`, `${wins}W – ${losses}L`);
+        })
+        .join("");
       return (
         mgStat("Went double-or-nothing", doubles.length) +
         mgStat("Doubles won", doublesWon.length) +
         mgStat("Time gained from doubling", fmtDuration(gained)) +
+        mgStat("Longest tie streak", longestTieStreak) +
+        perCall +
         note
       );
     }
     case "rps": {
+      const longestTieStreak = entries.length ? Math.max(...entries.map((e) => e.ties || 0)) : 0;
       const throws = tracked.map((e) => e.mgd.picks?.[e.meId]).filter(Boolean);
-      if (!throws.length) return note || `<p class="mg-empty">No throws recorded.</p>`;
+      if (!throws.length)
+        return mgStat("Longest tie streak", longestTieStreak) + (note || `<p class="mg-empty">No throws recorded.</p>`);
       const wonThrows = tracked.filter((e) => e.won).map((e) => e.mgd.picks?.[e.meId]).filter(Boolean);
       const perSymbol = THROWS.map((sym) => {
         const mineOfSym = tracked.filter((e) => e.mgd.picks?.[e.meId] === sym);
@@ -1151,6 +1204,7 @@ function minigameDetailHtml(key, entries) {
       return (
         mgStat("Most used throw", `${THROW_EMOJI[mode(throws)]} ${mode(throws)}`) +
         (wonThrows.length ? mgStat("Most won with", `${THROW_EMOJI[mode(wonThrows)]} ${mode(wonThrows)}`) : "") +
+        mgStat("Longest tie streak", longestTieStreak) +
         perSymbol +
         note
       );
@@ -2055,6 +2109,21 @@ function renderHubStats() {
  * the opponents differ. When exactly one game is in scope we can use the real
  * opponent's name.
  */
+/** Reshape groupRuns() output into barChart-compatible rows, one bar per streak. */
+function runsToBarRows(runs) {
+  return runs.map((r, i) => ({
+    order: i + 1,
+    at: r.to,
+    by: r.by,
+    mine: r.mine,
+    seconds: r.seconds,
+    rawSeconds: r.rawSeconds,
+    multiplier: r.anyDoubled ? 2 : 1,
+    viaDuel: r.anyDuel,
+    count: r.count,
+  }));
+}
+
 function renderCharts(list, single) {
   const width = Math.max(280, Math.min(680, ($("chart-clicks").clientWidth || 620)));
 
@@ -2073,7 +2142,8 @@ function renderCharts(list, single) {
   const meName = me.name || "You";
 
   // --- per-click bars ---
-  const rows = sortRows(claimRows(merged, "__me__"), clickSort);
+  const claimBars = claimRows(merged, "__me__");
+  const rows = sortRows(mergeClicks ? runsToBarRows(groupRuns(claimBars)) : claimBars, clickSort);
   setHTML("chart-clicks-legend", rows.length ? legend(meName, oppName) : "");
   setHTML("chart-clicks", barChart(rows, { width, meName, oppName }));
 
@@ -2588,6 +2658,13 @@ function wireHub() {
       renderHubStats();
     })
   );
+  $("btn-merge-clicks").addEventListener("click", () => {
+    mergeClicks = !mergeClicks;
+    store.set("mergeClicks", mergeClicks);
+    $("btn-merge-clicks").classList.toggle("active", mergeClicks);
+    $("btn-merge-clicks").setAttribute("aria-pressed", String(mergeClicks));
+    renderHubStats();
+  });
   document.querySelectorAll("[data-leadstyle]").forEach((b) =>
     b.addEventListener("click", () => {
       leadStyle = b.dataset.leadstyle;
@@ -2624,6 +2701,8 @@ function wireHub() {
   document
     .querySelectorAll("[data-clicksort]")
     .forEach((x) => x.classList.toggle("active", x.dataset.clicksort === clickSort));
+  $("btn-merge-clicks").classList.toggle("active", mergeClicks);
+  $("btn-merge-clicks").setAttribute("aria-pressed", String(mergeClicks));
   document
     .querySelectorAll("[data-leadstyle]")
     .forEach((x) => x.classList.toggle("active", x.dataset.leadstyle === leadStyle));
@@ -2805,6 +2884,7 @@ function renderDuelModal() {
     const potMultiplier = d.payoutMultiplier || 1;
     const isCoin = d.game === "coin";
     const coinFace = isCoin ? d.detail?.result : null;
+    const isDice = d.game === "dice";
 
     // Picker (also hosts the coin's double-or-nothing choice, once decided)
     const pickerEl = el("picker");
@@ -2858,13 +2938,23 @@ function renderDuelModal() {
         // this same face — let it run rather than restarting or cutting it off.
       }
 
+      // Same idea for the die: tumble it for a beat before the roll numbers
+      // land, so a fast bot response can't flash straight past the roll.
+      if (isDice && resultEl.dataset.diceSig !== resultSig) {
+        resultEl.dataset.diceSig = resultSig;
+        card.dataset.diceRevealAt = String(db.now() + DICE_ROLL_MS);
+        playDiceRoll(resultEl);
+      }
+
       const stillFlipping = coinFace && card.dataset.coinRevealAt && db.now() < Number(card.dataset.coinRevealAt);
+      const stillRolling = isDice && card.dataset.diceRevealAt && db.now() < Number(card.dataset.diceRevealAt);
+      const stillAnimating = stillFlipping || stillRolling;
       statusEl.textContent = "";
 
-      // While the coin is still spinning, the pot stays on the "in escrow"
-      // look — no "Doubled!"/"Settled" label — so a fast bot response can't
-      // flash past the flip.
-      const potLabel = stillFlipping
+      // While the coin/die is still animating, the pot stays on the "in
+      // escrow" look — no "Doubled!"/"Settled" label — so a fast bot response
+      // can't flash past the reveal.
+      const potLabel = stillAnimating
         ? `In escrow${d.round > 1 ? ` · round ${d.round}` : ""}`
         : d.doubled && !d.doubleLost
           ? "Doubled!"
@@ -2872,9 +2962,9 @@ function renderDuelModal() {
       el("pot").innerHTML = `<div class="pot-label">${potLabel}</div>
         <div class="pot-value">${fmtDuration(d.potSeconds * potMultiplier)}</div>`;
 
-      // Hold the verdict/explanation back until the coin (if any) has fully
-      // settled, so a fast bot response can't flash straight past the flip.
-      if (!stillFlipping && resultEl.dataset.sig !== resultSig) {
+      // Hold the verdict/explanation back until the coin/die (if any) has
+      // fully settled, so a fast bot response can't flash straight past it.
+      if (!stillAnimating && resultEl.dataset.sig !== resultSig) {
         resultEl.dataset.sig = resultSig;
 
         const doubleNote = d.doubled
@@ -2909,7 +2999,8 @@ function renderDuelModal() {
           ? `<div class="coin-flip-stage"><div class="coin-face settle ${finalFace}">${COIN_FACE[finalFace]}</div></div>
             <div class="coin-outcome ${finalFace}">${finalFace === "heads" ? "Heads" : "Tails"}</div>`
           : "";
-        resultEl.innerHTML = `${coinHtml}${restHtml}`;
+        const diceHtml = isDice ? `<div class="dice-flip-stage"><div class="dice-face">🎲</div></div>` : "";
+        resultEl.innerHTML = `${coinHtml}${diceHtml}${restHtml}`;
 
         if (myGolfPath || oppGolfPath) {
           const mount = resultEl.querySelector('[data-el="golf-replay"]');
@@ -3070,6 +3161,31 @@ function playCoinFlip(el, finalResult, { pulse = false } = {}) {
       }, COIN_PULSE_MS * COIN_PULSE_COUNT);
     }
   }, COIN_FLIP_MS);
+}
+
+const DICE_ROLL_MS = 1000;
+const DICE_ROLL_TICK_MS = 90;
+const DICE_FACES = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
+let diceRollSeq = 0;
+
+/**
+ * Animate a die roll into `el`: cycles through random die faces for
+ * DICE_ROLL_MS, purely as a client-side reveal delay for suspense — the
+ * actual roll is already decided server-side. The caller (render) rebuilds
+ * `el` with the settled result once card.dataset.diceRevealAt elapses.
+ */
+function playDiceRoll(el) {
+  const token = String(++diceRollSeq);
+  el.dataset.rollToken = token;
+  el.innerHTML = `<div class="dice-flip-stage"><div class="dice-face spin">${DICE_FACES[0]}</div></div>`;
+  const faceEl = el.querySelector(".dice-face");
+
+  const interval = setInterval(() => {
+    if (el.dataset.rollToken !== token) return clearInterval(interval);
+    faceEl.textContent = DICE_FACES[Math.floor(Math.random() * DICE_FACES.length)];
+  }, DICE_ROLL_TICK_MS);
+
+  setTimeout(() => clearInterval(interval), DICE_ROLL_MS);
 }
 
 /** The "X vs Y" line on the result screen, tailored to whichever minigame decided it. */

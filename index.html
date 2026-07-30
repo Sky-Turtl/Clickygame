@@ -245,14 +245,17 @@
         <div class="card">
           <div class="chart-head">
             <h2 class="card-title">Every claim</h2>
-            <div class="seg" role="group" aria-label="Sort claims">
-              <button class="seg-btn active" data-clicksort="time">Order clicked</button>
-              <button class="seg-btn" data-clicksort="size">Size</button>
+            <div class="chart-controls">
+              <div class="seg" role="group" aria-label="Sort claims">
+                <button class="seg-btn active" data-clicksort="time">Order clicked</button>
+                <button class="seg-btn" data-clicksort="size">Size</button>
+              </div>
+              <button type="button" class="seg-btn" id="btn-merge-clicks" aria-pressed="false">Merge streaks</button>
             </div>
           </div>
           <div id="chart-clicks-legend"></div>
           <div class="chart-wrap" id="chart-clicks"></div>
-          <p class="chart-note">Each bar is one claim. A gold cap marks a 2x claim.</p>
+          <p class="chart-note">Each bar is one claim. A gold cap marks a 2x claim. "Merge streaks" combines consecutive claims by the same person into one bar.</p>
         </div>
       </div>
 

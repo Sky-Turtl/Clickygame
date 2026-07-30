@@ -85,6 +85,7 @@ export function barChart(rows, { width = 640, height = 200, meName, oppName }) {
       `${r.mine ? meName : oppName} · ${fmtDuration(r.seconds)}` +
       (r.multiplier > 1 ? " · 2x" : "") +
       (r.viaDuel ? " · won duel" : "") +
+      (r.count > 1 ? ` · ${r.count} claims merged` : "") +
       ` · #${r.order}`;
     out +=
       `<rect class="bar" x="${bx.toFixed(2)}" y="${by.toFixed(2)}" width="${barW.toFixed(2)}" height="${bh.toFixed(2)}" ` +
