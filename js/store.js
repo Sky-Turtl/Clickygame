@@ -425,9 +425,9 @@ export async function claim(code, playerId) {
 
 // --- Duels ------------------------------------------------------------------
 
-export async function submitThrow(code, duelId, playerId, choice) {
+export async function submitThrow(code, duelId, playerId, choice, path) {
   await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>
-    applyThrow(duel, { duelId, playerId, choice })
+    applyThrow(duel, { duelId, playerId, choice, path })
   );
 }
 

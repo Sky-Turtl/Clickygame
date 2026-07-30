@@ -241,9 +241,9 @@ export async function claim(code, playerId) {
   return { outcome: "claim", claim: { id: claimId, ...c } };
 }
 
-export async function submitThrow(code, duelId, playerId, choice) {
+export async function submitThrow(code, duelId, playerId, choice, path) {
   const game = g(code);
-  const next = applyThrow(game.state.duel, { duelId, playerId, choice });
+  const next = applyThrow(game.state.duel, { duelId, playerId, choice, path });
   if (next !== undefined) {
     game.state = { ...game.state, duel: next };
     emitAll(code);

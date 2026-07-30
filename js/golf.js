@@ -11,6 +11,8 @@
 // obstacles) derived from the duel id, so there's nothing to store — same
 // trick as the 2x windows in rules.js.
 
+import { esc } from "./util.js";
+
 const W = 300;
 const H = 170;
 const EDGE_MARGIN = 22; // how close the tee/hole sit to whichever edge they're placed on
@@ -309,19 +311,20 @@ export function mountGolf(container, seed, round, onDone) {
 }
 
 /**
- * Replays a previously recorded shot (the `path` handed back from `onDone`)
- * on the same course it was played on. Only the local player's own path is
- * ever recorded today — there's no wire format yet for sharing an opponent's
- * shot — so this is what a "watch their replay" button falls back to until
- * that's built.
+ * Replays previously recorded shots (the `path` handed back from `onDone`,
+ * synced up via each player's `golfPaths` entry on the duel) on the same
+ * course they were played on. Shows one button per side that actually has a
+ * recorded shot — usually both, once the duel resolves.
  *
- * @param container element to mount the canvas + replay button into
+ * @param container element to mount the canvas + replay buttons into
  * @param seed      same duel id used for the original shot, so the course matches
  * @param round     same round the shot was played in
- * @param path      the recorded {x,y}[] from that shot's onDone callback
+ * @param paths     { mine, opponent } — each either the recorded {x,y}[] from
+ *                  that player's shot, or falsy if it isn't available
+ * @param oppName   opponent's display name, for the button label
  * @returns {destroy()} to unhook listeners if the modal goes away mid-replay
  */
-export function mountGolfReplay(container, seed, round, path) {
+export function mountGolfReplay(container, seed, round, paths, oppName) {
   const { tee, hole } = pickLayout(seed);
   const obstacles = placeObstacles(seed, round || 1, tee, hole);
 
@@ -333,12 +336,19 @@ export function mountGolfReplay(container, seed, round, path) {
   container.appendChild(canvas);
   const actions = document.createElement("div");
   actions.className = "golf-actions";
-  actions.innerHTML = `<button type="button" class="btn btn-ghost" data-golf="replay">Watch replay</button>`;
+  actions.innerHTML = [
+    paths?.mine ? `<button type="button" class="btn btn-ghost" data-golf="replay-mine">Watch your replay</button>` : "",
+    paths?.opponent
+      ? `<button type="button" class="btn btn-ghost" data-golf="replay-opp">Watch ${
+          oppName ? esc(oppName) + "&#39;s" : "their"
+        } replay</button>`
+      : "",
+  ].join("");
   container.appendChild(actions);
-  const replayBtn = actions.querySelector('[data-golf="replay"]');
 
   const ctx = canvas.getContext("2d");
-  const ball = { x: (path[0] || tee).x, y: (path[0] || tee).y };
+  const startPath = paths?.mine || paths?.opponent;
+  const ball = { x: (startPath?.[0] || tee).x, y: (startPath?.[0] || tee).y };
   let raf = null;
 
   function draw() {
@@ -361,13 +371,13 @@ export function mountGolfReplay(container, seed, round, path) {
     ctx.fill();
   }
 
-  function play() {
+  function play(path) {
     if (raf || !path || !path.length) return;
-    replayBtn.disabled = true;
+    actions.querySelectorAll("button").forEach((b) => (b.disabled = true));
     let i = 0;
     function step() {
       if (i >= path.length) {
-        replayBtn.disabled = false;
+        actions.querySelectorAll("button").forEach((b) => (b.disabled = false));
         raf = null;
         return;
       }
@@ -381,12 +391,15 @@ export function mountGolfReplay(container, seed, round, path) {
   }
 
   function onAction(e) {
-    if (e.target.closest('[data-golf="replay"]')) play();
+    const btn = e.target.closest("[data-golf]");
+    if (!btn) return;
+    if (btn.dataset.golf === "replay-mine") play(paths.mine);
+    else if (btn.dataset.golf === "replay-opp") play(paths.opponent);
   }
   actions.addEventListener("click", onAction);
 
   draw();
-  play();
+  play(startPath);
 
   return {
     destroy() {
