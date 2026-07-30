@@ -887,13 +887,24 @@ function minigameDetailHtml(key, entries) {
       );
     }
     case "coin": {
+      const longestTieStreak = entries.length ? Math.max(...entries.map((e) => e.ties || 0)) : 0;
       const doubles = tracked.filter((e) => e.mgd.doubled && e.mgd.doubler === e.meId);
       const doublesWon = doubles.filter((e) => !e.mgd.doubleLost);
       const gained = doublesWon.reduce((s, e) => s + (e.seconds - (e.mgd.potSeconds || 0)), 0);
+      const perCall = ["heads", "tails"]
+        .map((side) => {
+          const mineOfSide = tracked.filter((e) => e.mgd.picks?.[e.meId] === side);
+          const wins = mineOfSide.filter((e) => e.won).length;
+          const losses = mineOfSide.length - wins;
+          return mgStat(`${side === "heads" ? "🪙 Heads" : "🪙 Tails"} record`, `${wins}W – ${losses}L`);
+        })
+        .join("");
       return (
         mgStat("Went double-or-nothing", doubles.length) +
         mgStat("Doubles won", doublesWon.length) +
         mgStat("Time gained from doubling", fmtDuration(gained)) +
+        mgStat("Longest tie streak", longestTieStreak) +
+        perCall +
         note
       );
     }
