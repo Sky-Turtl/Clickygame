@@ -1263,11 +1263,19 @@ function paceFor(g) {
   const theirs = rows[opp.id]?.all.claimed || 0;
   const lead = mine - theirs;
 
+  // How much more, per that same bucket size, the trailing side would need
+  // to average — sustained for the rest of the game — to erase the gap
+  // exactly by the deadline. A rough guide, not the exact math
+  // `catchUpWindow` does — it spreads the deficit evenly over the remaining
+  // time rather than accounting for exactly where 2x windows fall.
+  const remainMs = Math.max(0, g.meta.endsAt - db.now());
+
   const windows = ["1h", "6h", "1d"].map((key) => {
     const p = PERIODS.find((x) => x.key === key);
     const m = rows[myId(g)]?.[key]?.claimed || 0;
     const t = rows[opp.id]?.[key]?.claimed || 0;
-    return { key, label: p.label, ms: p.ms, mine: m, theirs: t, diff: m - t };
+    const need = lead !== 0 && remainMs > 0 ? Math.abs(lead) * (p.ms / remainMs) : null;
+    return { key, label: p.label, ms: p.ms, mine: m, theirs: t, diff: m - t, need };
   });
 
   // Prefer the freshest window that actually has activity in it, so a quiet
@@ -1298,17 +1306,7 @@ function paceFor(g) {
           : "You're losing and holding steady — not closing the gap.";
   }
 
-  // How much more per `primary` bucket the trailing side would need to
-  // average, sustained for the rest of the game, to erase the gap exactly by
-  // the deadline. A rough guide, not the exact math `catchUpWindow` does —
-  // it spreads the deficit evenly over the remaining time rather than
-  // accounting for exactly where 2x windows fall.
-  const remainMs = Math.max(0, g.meta.endsAt - db.now());
-  const bucketLabel = { "1h": "hour", "6h": "6 hours", "1d": "day" }[primary.key];
-  const needPerBucket =
-    lead !== 0 && remainMs > 0 ? Math.abs(lead) * (primary.ms / remainMs) : null;
-
-  return { windows, lead, verdict, needPerBucket, bucketLabel, forMe: lead < 0 };
+  return { windows, lead, verdict, forMe: lead < 0 };
 }
 
 /** A duel that still has an undecided outcome — including a coin's double-or-nothing offer. */
@@ -1808,7 +1806,7 @@ function renderGameList() {
       const catchUp = over ? null : catchUpWindow(g);
       const catchUpHtml = catchUpHtmlFor(catchUp, opp, remain);
       const pace = over ? null : paceFor(g);
-      const paceHtml = paceHtmlFor(pace, opp);
+      const paceHtml = paceHtmlFor(pace);
 
       // Only these decide whether the DOM needs to be torn down and rebuilt;
       // seconds-precision countdown text is intentionally left out so a
@@ -1922,7 +1920,7 @@ function renderGameList() {
 
     const pace = over ? null : paceFor(g);
     const paceWrap = card.querySelector(".gc-pace-wrap");
-    if (pace && paceWrap) paceWrap.innerHTML = paceHtmlFor(pace, opponentOf(g));
+    if (pace && paceWrap) paceWrap.innerHTML = paceHtmlFor(pace);
   });
 }
 
@@ -1950,30 +1948,31 @@ function catchUpHtmlFor(catchUp, opp, remainMs) {
   return html;
 }
 
-function paceHtmlFor(pace, opp) {
+/** "mm:ss", minutes uncapped (e.g. "125:07" for 2h5m7s) — for the tight
+ * per-row catch-up parenthetical, where the compact word form reads noisy. */
+function fmtMmSs(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m}:${String(s).padStart(2, "0")}`;
+}
+
+function paceHtmlFor(pace) {
   if (!pace) return "";
   const rows = pace.windows
     .map((w) => {
       const active = w.mine + w.theirs > 0;
       const cls = w.diff > 0 ? "up" : w.diff < 0 ? "down" : "";
       const text = active ? `${w.diff > 0 ? "+" : w.diff < 0 ? "−" : ""}${fmtDurationShort(Math.abs(w.diff))}` : "—";
-      return `<div class="gc-pace-row"><span class="gc-pace-label">${esc(w.label)}</span><span class="gc-pace-diff ${cls}">${text}</span></div>`;
+      const needText = w.need != null ? ` <span class="gc-pace-need">(${fmtMmSs(w.need)} to catch up)</span>` : "";
+      return `<div class="gc-pace-row"><span class="gc-pace-label">${esc(w.label)}</span><span class="gc-pace-diff ${cls}">${text}${needText}</span></div>`;
     })
     .join("");
   const verdictCls = pace.lead === 0 ? "" : pace.lead > 0 ? "safe" : "lost";
-  const needHtml =
-    pace.needPerBucket != null
-      ? `<div class="gc-pace-need">${
-          pace.forMe
-            ? `You'd need ~${fmtDurationShort(pace.needPerBucket)} more than them per ${pace.bucketLabel} to catch up by the deadline.`
-            : `${esc(opp?.name || "They")} would need ~${fmtDurationShort(pace.needPerBucket)} more than you per ${pace.bucketLabel} to catch up by the deadline.`
-        }</div>`
-      : "";
   return `<div class="gc-pace">
     <div class="gc-pace-title">Pace</div>
     ${rows}
     <div class="gc-pace-verdict ${verdictCls}">${esc(pace.verdict)}</div>
-    ${needHtml}
   </div>`;
 }
 
