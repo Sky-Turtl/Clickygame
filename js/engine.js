@@ -45,9 +45,16 @@ function pickGame(duelId) {
   return DUEL_GAMES[Math.floor(seededFloat(`${duelId}|game`) * DUEL_GAMES.length)];
 }
 
-/** Random 1.2-3.8s delay before a reaction round's "go" moment. */
+/**
+ * Random delay before a reaction round's "go" moment. Shaped as an Erlang(2)
+ * draw on top of a 1.2s floor: rises then decays, so most delays land around
+ * 2-3s while a long tail keeps rarer, longer waits possible (rather than a
+ * flat cutoff that never goes past a fixed max).
+ */
 function reactionDelay(duelId, round) {
-  return 1200 + Math.floor(seededFloat(`${duelId}|${round}|delay`) * 2600);
+  const u1 = seededFloat(`${duelId}|${round}|delay1`);
+  const u2 = seededFloat(`${duelId}|${round}|delay2`);
+  return 1200 + Math.round(-750 * Math.log(u1 * u2));
 }
 
 /**
