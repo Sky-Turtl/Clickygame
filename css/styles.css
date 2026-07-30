@@ -889,6 +889,11 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-
   0% { transform: rotateY(0deg) scale(1.25); }
   100% { transform: rotateY(0deg) scale(1); }
 }
+.coin-face.pulse { animation: coin-pulse 0.35s ease-in-out 2; }
+@keyframes coin-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.35); }
+}
 .coin-outcome { text-align: center; font-weight: 700; font-size: 15px; letter-spacing: .06em; text-transform: uppercase; margin: 2px 0 10px; }
 .coin-outcome.heads { color: var(--gold); }
 .coin-outcome.tails { color: var(--text-dim); }
