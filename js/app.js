@@ -2045,9 +2045,12 @@ function pingDuelActivity(code, duelId) {
 
 function renderDuelModal() {
   const host = $("rps-host");
-  const entries = allActiveDuels();
+  // Only show one duel modal at a time — stacking multiple full-screen,
+  // backdrop-blurred modals breaks touch handling on iOS Safari. The rest
+  // wait their turn and pop in once the current one is dismissed.
+  const entries = allActiveDuels().slice(0, 1);
 
-  // Remove modals for duels that are no longer active.
+  // Remove modals for duels that are no longer active or no longer current.
   const activeKeys = new Set(entries.map((e) => `duel-${e.g.code}-${e.duel.id}`));
   for (const el of [...host.children]) {
     if (!activeKeys.has(el.id)) el.remove();
