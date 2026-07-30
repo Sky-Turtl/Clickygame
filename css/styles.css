@@ -955,6 +955,17 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-
 .coin-outcome.tails { color: var(--text-dim); }
 .coin-outcome.flipping { opacity: .55; }
 
+.dice-flip-stage { perspective: 600px; display: flex; justify-content: center; margin: 4px 0 10px; }
+.dice-face { font-size: 46px; line-height: 1; display: inline-block; }
+.dice-face.spin { animation: dice-tumble 1s cubic-bezier(.22,.61,.36,1) 1; }
+@keyframes dice-tumble {
+  0% { transform: rotate(0deg) scale(1); }
+  25% { transform: rotate(200deg) scale(1.1); }
+  50% { transform: rotate(380deg) scale(0.95); }
+  75% { transform: rotate(560deg) scale(1.1); }
+  100% { transform: rotate(720deg) scale(1); }
+}
+
 .rps-result { text-align: center; margin-top: 16px; }
 .rps-result .rr-throws { font-size: 20px; line-height: 1.4; }
 .rps-result .rr-verdict { font-size: 17px; font-weight: 700; margin-top: 8px; }

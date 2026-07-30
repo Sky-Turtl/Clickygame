@@ -2546,6 +2546,7 @@ function renderDuelModal() {
     const potMultiplier = d.payoutMultiplier || 1;
     const isCoin = d.game === "coin";
     const coinFace = isCoin ? d.detail?.result : null;
+    const isDice = d.game === "dice";
 
     // Picker (also hosts the coin's double-or-nothing choice, once decided)
     const pickerEl = el("picker");
@@ -2599,13 +2600,23 @@ function renderDuelModal() {
         // this same face — let it run rather than restarting or cutting it off.
       }
 
+      // Same idea for the die: tumble it for a beat before the roll numbers
+      // land, so a fast bot response can't flash straight past the roll.
+      if (isDice && resultEl.dataset.diceSig !== resultSig) {
+        resultEl.dataset.diceSig = resultSig;
+        card.dataset.diceRevealAt = String(db.now() + DICE_ROLL_MS);
+        playDiceRoll(resultEl);
+      }
+
       const stillFlipping = coinFace && card.dataset.coinRevealAt && db.now() < Number(card.dataset.coinRevealAt);
+      const stillRolling = isDice && card.dataset.diceRevealAt && db.now() < Number(card.dataset.diceRevealAt);
+      const stillAnimating = stillFlipping || stillRolling;
       statusEl.textContent = "";
 
-      // While the coin is still spinning, the pot stays on the "in escrow"
-      // look — no "Doubled!"/"Settled" label — so a fast bot response can't
-      // flash past the flip.
-      const potLabel = stillFlipping
+      // While the coin/die is still animating, the pot stays on the "in
+      // escrow" look — no "Doubled!"/"Settled" label — so a fast bot response
+      // can't flash past the reveal.
+      const potLabel = stillAnimating
         ? `In escrow${d.round > 1 ? ` · round ${d.round}` : ""}`
         : d.doubled && !d.doubleLost
           ? "Doubled!"
@@ -2613,9 +2624,9 @@ function renderDuelModal() {
       el("pot").innerHTML = `<div class="pot-label">${potLabel}</div>
         <div class="pot-value">${fmtDuration(d.potSeconds * potMultiplier)}</div>`;
 
-      // Hold the verdict/explanation back until the coin (if any) has fully
-      // settled, so a fast bot response can't flash straight past the flip.
-      if (!stillFlipping && resultEl.dataset.sig !== resultSig) {
+      // Hold the verdict/explanation back until the coin/die (if any) has
+      // fully settled, so a fast bot response can't flash straight past it.
+      if (!stillAnimating && resultEl.dataset.sig !== resultSig) {
         resultEl.dataset.sig = resultSig;
 
         const doubleNote = d.doubled
@@ -2650,7 +2661,8 @@ function renderDuelModal() {
           ? `<div class="coin-flip-stage"><div class="coin-face settle ${finalFace}">${COIN_FACE[finalFace]}</div></div>
             <div class="coin-outcome ${finalFace}">${finalFace === "heads" ? "Heads" : "Tails"}</div>`
           : "";
-        resultEl.innerHTML = `${coinHtml}${restHtml}`;
+        const diceHtml = isDice ? `<div class="dice-flip-stage"><div class="dice-face">🎲</div></div>` : "";
+        resultEl.innerHTML = `${coinHtml}${diceHtml}${restHtml}`;
 
         if (myGolfPath || oppGolfPath) {
           const mount = resultEl.querySelector('[data-el="golf-replay"]');
@@ -2811,6 +2823,31 @@ function playCoinFlip(el, finalResult, { pulse = false } = {}) {
       }, COIN_PULSE_MS * COIN_PULSE_COUNT);
     }
   }, COIN_FLIP_MS);
+}
+
+const DICE_ROLL_MS = 1000;
+const DICE_ROLL_TICK_MS = 90;
+const DICE_FACES = ["⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
+let diceRollSeq = 0;
+
+/**
+ * Animate a die roll into `el`: cycles through random die faces for
+ * DICE_ROLL_MS, purely as a client-side reveal delay for suspense — the
+ * actual roll is already decided server-side. The caller (render) rebuilds
+ * `el` with the settled result once card.dataset.diceRevealAt elapses.
+ */
+function playDiceRoll(el) {
+  const token = String(++diceRollSeq);
+  el.dataset.rollToken = token;
+  el.innerHTML = `<div class="dice-flip-stage"><div class="dice-face spin">${DICE_FACES[0]}</div></div>`;
+  const faceEl = el.querySelector(".dice-face");
+
+  const interval = setInterval(() => {
+    if (el.dataset.rollToken !== token) return clearInterval(interval);
+    faceEl.textContent = DICE_FACES[Math.floor(Math.random() * DICE_FACES.length)];
+  }, DICE_ROLL_TICK_MS);
+
+  setTimeout(() => clearInterval(interval), DICE_ROLL_MS);
 }
 
 /** The "X vs Y" line on the result screen, tailored to whichever minigame decided it. */
