@@ -154,9 +154,8 @@ export function applyClaim(state, ctx) {
       createdAt: ctx.at,
       picks: null,
     };
-    // Reaction's goAt isn't set here: a player already mid-duel elsewhere
-    // shouldn't have a reaction clock silently running against them, so it
-    // waits on both sides reporting clear — see applyReactionClear/
+    // Reaction's goAt isn't set here: the clock shouldn't start until both
+    // players have actually clicked "I'm ready" — see applyReactionClear/
     // applyStartReaction, driven by store.checkReactionStart.
     if (game === "reaction") duel.reactionClear = {};
     // Tracks the start of the *current* round for timeout purposes — reset on
@@ -402,10 +401,9 @@ export function applyDuelTimeout(state, ctx) {
 }
 
 /**
- * A player reports whether *they personally* are free to start a reaction
- * round — i.e. they have no other open duel elsewhere. Only that player's own
- * client can know this (it's derived from their own game list), so this is
- * self-reported, one flag per player, rather than computed here.
+ * A player clicked "I'm ready" for a reaction round. One flag per player,
+ * self-reported since only that player's own client can know they've hit the
+ * button.
  *
  * @param duel current duel node
  * @param ctx  { duelId, playerId, clear }
