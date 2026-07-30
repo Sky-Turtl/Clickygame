@@ -293,57 +293,73 @@
 
     <div id="detail-banners"></div>
 
-    <div class="card">
-      <h2 class="card-title">Standings</h2>
-      <p class="card-sub" id="detail-deadline"></p>
-      <div class="scores" id="detail-scores"></div>
-    </div>
-
-    <div class="card">
-      <h2 class="card-title">Claimed time by period</h2>
-      <p class="card-sub">
-        <strong>Claimed</strong> counts the 2x bonus and decides the winner.
-        <strong>Actual</strong> is real wall-clock time that was on the board.
-      </p>
-      <div class="table-scroll">
-        <table class="summary-table" id="summary-table"></table>
+    <div class="box-dashboard" id="detail-dashboard">
+      <div class="dash-box" data-box="standings">
+        <div class="card">
+          <h2 class="card-title">Standings</h2>
+          <p class="card-sub" id="detail-deadline"></p>
+          <div class="scores" id="detail-scores"></div>
+        </div>
       </div>
-    </div>
 
-    <div class="card">
-      <h2 class="card-title">Game totals</h2>
-      <div class="stat-grid" id="stat-grid"></div>
-    </div>
+      <div class="dash-box" data-box="summary-table">
+        <div class="card">
+          <h2 class="card-title">Claimed time by period</h2>
+          <p class="card-sub">
+            <strong>Claimed</strong> counts the 2x bonus and decides the winner.
+            <strong>Actual</strong> is real wall-clock time that was on the board.
+          </p>
+          <div class="table-scroll">
+            <table class="summary-table" id="summary-table"></table>
+          </div>
+        </div>
+      </div>
 
-    <div class="card">
-      <h2 class="card-title">Today's 2x windows</h2>
-      <p class="card-sub">Each game rolls its own windows — they won't line up across games.</p>
-      <div id="windows-list" class="windows-list"></div>
-    </div>
+      <div class="dash-box" data-box="stat-grid">
+        <div class="card">
+          <h2 class="card-title">Game totals</h2>
+          <div class="stat-grid" id="stat-grid"></div>
+        </div>
+      </div>
 
-    <div class="card">
-      <h2 class="card-title">Recent claims</h2>
-      <ul class="feed" id="feed"><li class="feed-empty">No claims yet.</li></ul>
-    </div>
+      <div class="dash-box" data-box="windows">
+        <div class="card">
+          <h2 class="card-title">Today's 2x windows</h2>
+          <p class="card-sub">Each game rolls its own windows — they won't line up across games.</p>
+          <div id="windows-list" class="windows-list"></div>
+        </div>
+      </div>
 
-    <div class="card">
-      <h2 class="card-title">Export</h2>
-      <p class="card-sub">
-        Copies this game's full claim history as JSON. Paste it into a new game's
-        "Start from existing data" to carry the history over.
-      </p>
-      <button class="btn btn-ghost" id="btn-export">Copy game data</button>
-    </div>
+      <div class="dash-box" data-box="feed">
+        <div class="card">
+          <h2 class="card-title">Recent claims</h2>
+          <ul class="feed" id="feed"><li class="feed-empty">No claims yet.</li></ul>
+        </div>
+      </div>
 
-    <div class="card">
-      <h2 class="card-title">Discord webhook</h2>
-      <p class="card-sub">Shared by both players in this game. Leave blank to disable.</p>
-      <form id="webhook-form" autocomplete="off">
-        <label>
-          <input type="url" id="detail-webhook" placeholder="https://discord.com/api/webhooks/...">
-        </label>
-        <button type="submit" class="btn btn-ghost">Save webhook</button>
-      </form>
+      <div class="dash-box" data-box="export">
+        <div class="card">
+          <h2 class="card-title">Export</h2>
+          <p class="card-sub">
+            Copies this game's full claim history as JSON. Paste it into a new game's
+            "Start from existing data" to carry the history over.
+          </p>
+          <button class="btn btn-ghost" id="btn-export">Copy game data</button>
+        </div>
+      </div>
+
+      <div class="dash-box" data-box="webhook">
+        <div class="card">
+          <h2 class="card-title">Discord webhook</h2>
+          <p class="card-sub">Shared by both players in this game. Leave blank to disable.</p>
+          <form id="webhook-form" autocomplete="off">
+            <label>
+              <input type="url" id="detail-webhook" placeholder="https://discord.com/api/webhooks/...">
+            </label>
+            <button type="submit" class="btn btn-ghost">Save webhook</button>
+          </form>
+        </div>
+      </div>
     </div>
 
     <div class="card">
@@ -360,9 +376,8 @@
       </div>
     </header>
 
-    <div class="profile-dashboard" id="profile-dashboard">
+    <div class="box-dashboard" id="profile-dashboard">
       <div class="dash-box" data-box="record">
-        <div class="dash-box-handle" title="Drag to rearrange">⠿</div>
         <div class="card">
           <p class="card-sub">Logged in as <strong id="profile-username"></strong>.</p>
           <div class="stat-grid" id="profile-record"></div>
@@ -370,7 +385,6 @@
       </div>
 
       <div class="dash-box" data-box="minigame-table">
-        <div class="dash-box-handle" title="Drag to rearrange">⠿</div>
         <div class="section-head">
           <h2>Minigame record</h2>
           <div class="filter-row">
@@ -392,7 +406,6 @@
       </div>
 
       <div class="dash-box" data-box="breakdown">
-        <div class="dash-box-handle" title="Drag to rearrange">⠿</div>
         <div class="section-head">
           <h2>By minigame</h2>
         </div>
@@ -403,7 +416,6 @@
       </div>
 
       <div class="dash-box" data-box="games">
-        <div class="dash-box-handle" title="Drag to rearrange">⠿</div>
         <div class="section-head">
           <h2>Games</h2>
         </div>

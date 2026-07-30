@@ -691,3 +691,13 @@ export function setAccountRoster(uid, rosterObj) {
 export function watchAccountRoster(uid, cb) {
   return onValue(child(accountRef(uid), "roster"), (snap) => cb(snap.val() || {}));
 }
+
+/** The account's saved dashboard layout: { profile: [{id, span, height}], detail: [...] }. */
+export async function getAccountDashboardLayout(uid) {
+  const snap = await get(child(accountRef(uid), "dashboardLayout"));
+  return snap.val() || null;
+}
+
+export function setAccountDashboardLayout(uid, layout) {
+  return set(child(accountRef(uid), "dashboardLayout"), layout);
+}

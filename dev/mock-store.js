@@ -434,6 +434,17 @@ export function watchAccountRoster(uid, cb) {
   return () => {};
 }
 
+let mockDashboardLayout = null;
+
+export async function getAccountDashboardLayout() {
+  return clone(mockDashboardLayout);
+}
+
+export function setAccountDashboardLayout(uid, layout) {
+  mockDashboardLayout = clone(layout);
+  return Promise.resolve();
+}
+
 // --- Bot opponent -----------------------------------------------------------
 
 function botPickFor(duel) {

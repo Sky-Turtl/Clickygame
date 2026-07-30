@@ -308,39 +308,47 @@ code { font-family: var(--mono); font-size: .92em; background: rgba(255,255,255,
 
 input[type=date] { color-scheme: dark; }
 
-/* ---------- Profile dashboard ---------- */
+/* ---------- Box dashboards (profile / game detail) ---------- */
 
-.profile-dashboard { display: block; }
+.box-dashboard { display: block; }
 .dash-box { position: relative; }
-.dash-box-handle { display: none; }
+.dash-box-handle,
+.dash-box-resize { display: none; }
 
 @media (min-width: 900px) {
-  body.profile-active #app { max-width: 1040px; }
+  body.screen-profile #app,
+  body.screen-detail #app { max-width: 1040px; }
 
-  .profile-dashboard {
+  .box-dashboard {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
     align-items: start;
     gap: 14px;
   }
-  .profile-dashboard .card,
-  .profile-dashboard .section-head { margin-bottom: 0; }
-  .profile-dashboard .section-head { margin-top: 0; }
+  .box-dashboard .card,
+  .box-dashboard .section-head { margin-bottom: 0; }
+  .box-dashboard .section-head { margin-top: 0; }
 
   .dash-box {
     background: var(--bg-raise-2);
     border: 1px solid var(--line);
     border-radius: var(--radius);
-    padding: 10px 12px 12px;
+    padding: 24px 12px 16px;
+    overflow: auto;
+    min-height: 60px;
   }
-  .dash-box .card { background: transparent; border: none; padding: 8px 0 0; }
+  .dash-box[data-span="2"] { grid-column: span 2; }
+  .dash-box .card { background: transparent; border: none; padding: 0; }
   .dash-box .section-head { padding: 0 2px; }
 
   .dash-box-handle {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 100%;
+    position: absolute;
+    top: 2px;
+    left: 0;
+    right: 0;
     height: 18px;
     color: var(--text-faint);
     font-size: 14px;
@@ -352,6 +360,31 @@ input[type=date] { color-scheme: dark; }
   .dash-box-handle:hover { background: var(--bg-raise); color: var(--text-dim); }
   .dash-box.dragging { opacity: .45; }
   .dash-box.drag-over { outline: 2px dashed var(--accent); outline-offset: 2px; }
+
+  .dash-box-resize {
+    display: block;
+    position: absolute;
+    right: 2px;
+    bottom: 2px;
+    width: 16px;
+    height: 16px;
+    cursor: nwse-resize;
+    color: var(--text-faint);
+    opacity: .6;
+    user-select: none;
+  }
+  .dash-box-resize:hover { opacity: 1; color: var(--text-dim); }
+  .dash-box-resize::after {
+    content: "";
+    position: absolute;
+    right: 3px;
+    bottom: 3px;
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid currentColor;
+    border-bottom: 2px solid currentColor;
+    border-radius: 0 0 2px 0;
+  }
 }
 
 /* ---------- Section head ---------- */
