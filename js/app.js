@@ -96,6 +96,7 @@ let lastClaimIds = new Map(); // code -> last claim id we've already put in the 
 
 // Chart controls
 let clickSort = store.get("clickSort", "time"); // "time" | "size"
+let mergeClicks = store.get("mergeClicks", false); // collapse same-player streaks into one bar
 let leadStyle = store.get("leadStyle", "area"); // "area" | "candle"
 let bucketKey = store.get("bucketKey", "1h");
 /** Click-to-zoom on the "who's winning" chart: {start, end} in ms, or null for the full view. */
@@ -838,12 +839,22 @@ function minigameDetailHtml(key, entries) {
 
   switch (key) {
     case "dice": {
-      const rolls = tracked.map((e) => mine(e, "rollA", "rollB")).filter((v) => Number.isFinite(v));
+      const rollOf = (e) => mine(e, "rollA", "rollB");
+      const rolls = tracked.map(rollOf).filter((v) => Number.isFinite(v));
       if (!rolls.length) return note || `<p class="mg-empty">No rolls recorded.</p>`;
+      const perRoll = [1, 2, 3, 4, 5, 6]
+        .map((n) => {
+          const mineOfN = tracked.filter((e) => rollOf(e) === n);
+          const wins = mineOfN.filter((e) => e.won).length;
+          const pct = mineOfN.length ? `${Math.round((wins / mineOfN.length) * 100)}%` : "—";
+          return mgStat(`Rolled ${n} winrate`, `${pct} (${mineOfN.length})`);
+        })
+        .join("");
       return (
         mgStat("Most rolled", mode(rolls)) +
         mgStat("Average roll", mean(rolls).toFixed(2)) +
         mgStat("Rolls tracked", rolls.length) +
+        perRoll +
         note
       );
     }
@@ -1828,6 +1839,21 @@ function renderHubStats() {
  * the opponents differ. When exactly one game is in scope we can use the real
  * opponent's name.
  */
+/** Reshape groupRuns() output into barChart-compatible rows, one bar per streak. */
+function runsToBarRows(runs) {
+  return runs.map((r, i) => ({
+    order: i + 1,
+    at: r.to,
+    by: r.by,
+    mine: r.mine,
+    seconds: r.seconds,
+    rawSeconds: r.rawSeconds,
+    multiplier: r.anyDoubled ? 2 : 1,
+    viaDuel: r.anyDuel,
+    count: r.count,
+  }));
+}
+
 function renderCharts(list, single) {
   const width = Math.max(280, Math.min(680, ($("chart-clicks").clientWidth || 620)));
 
@@ -1846,7 +1872,8 @@ function renderCharts(list, single) {
   const meName = me.name || "You";
 
   // --- per-click bars ---
-  const rows = sortRows(claimRows(merged, "__me__"), clickSort);
+  const claimBars = claimRows(merged, "__me__");
+  const rows = sortRows(mergeClicks ? runsToBarRows(groupRuns(claimBars)) : claimBars, clickSort);
   setHTML("chart-clicks-legend", rows.length ? legend(meName, oppName) : "");
   setHTML("chart-clicks", barChart(rows, { width, meName, oppName }));
 
@@ -2361,6 +2388,13 @@ function wireHub() {
       renderHubStats();
     })
   );
+  $("btn-merge-clicks").addEventListener("click", () => {
+    mergeClicks = !mergeClicks;
+    store.set("mergeClicks", mergeClicks);
+    $("btn-merge-clicks").classList.toggle("active", mergeClicks);
+    $("btn-merge-clicks").setAttribute("aria-pressed", String(mergeClicks));
+    renderHubStats();
+  });
   document.querySelectorAll("[data-leadstyle]").forEach((b) =>
     b.addEventListener("click", () => {
       leadStyle = b.dataset.leadstyle;
@@ -2397,6 +2431,8 @@ function wireHub() {
   document
     .querySelectorAll("[data-clicksort]")
     .forEach((x) => x.classList.toggle("active", x.dataset.clicksort === clickSort));
+  $("btn-merge-clicks").classList.toggle("active", mergeClicks);
+  $("btn-merge-clicks").setAttribute("aria-pressed", String(mergeClicks));
   document
     .querySelectorAll("[data-leadstyle]")
     .forEach((x) => x.classList.toggle("active", x.dataset.leadstyle === leadStyle));
