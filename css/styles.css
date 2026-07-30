@@ -333,19 +333,39 @@ input[type=date] { color-scheme: dark; }
     background: var(--bg-raise-2);
     border: 1px solid var(--line);
     border-radius: var(--radius);
-    padding: 24px 12px 16px;
-    overflow: auto;
-    min-height: 60px;
+    overflow: hidden;
+    min-height: 40px;
   }
   .dash-box[data-span="2"] { grid-column: span 2; }
   .dash-box .card { background: transparent; border: none; padding: 0; }
   .dash-box .section-head { padding: 0 2px; }
+
+  /* The box itself never scrolls — only this inner wrapper does — so the
+     drag handle and resize grip (siblings, absolutely positioned against
+     the box) stay pinned in place instead of scrolling away with content. */
+  .dash-box-content {
+    height: 100%;
+    overflow: auto;
+    padding: 24px 12px 16px;
+    box-sizing: border-box;
+    scrollbar-width: thin;
+    scrollbar-color: var(--line) transparent;
+  }
+  .dash-box-content::-webkit-scrollbar { width: 9px; height: 9px; }
+  .dash-box-content::-webkit-scrollbar-track { background: transparent; }
+  .dash-box-content::-webkit-scrollbar-thumb {
+    background: var(--line);
+    border-radius: 6px;
+    border: 2px solid var(--bg-raise-2);
+  }
+  .dash-box-content::-webkit-scrollbar-thumb:hover { background: var(--text-faint); }
 
   .dash-box-handle {
     display: flex;
     align-items: center;
     justify-content: center;
     position: absolute;
+    z-index: 2;
     top: 2px;
     left: 0;
     right: 0;
@@ -356,6 +376,7 @@ input[type=date] { color-scheme: dark; }
     cursor: grab;
     border-radius: 6px;
     user-select: none;
+    background: linear-gradient(var(--bg-raise-2) 60%, transparent);
   }
   .dash-box-handle:hover { background: var(--bg-raise); color: var(--text-dim); }
   .dash-box.dragging { opacity: .45; }
@@ -364,6 +385,7 @@ input[type=date] { color-scheme: dark; }
   .dash-box-resize {
     display: block;
     position: absolute;
+    z-index: 2;
     right: 2px;
     bottom: 2px;
     width: 16px;
