@@ -2374,11 +2374,20 @@ function duelTag(g, row) {
 
   const tieNote = row.ties ? `<div class="gc-duel-tip-streak">${row.ties} redraw${row.ties === 1 ? "" : "s"} first</div>` : "";
 
+  let doubleNote = "";
+  if (row.mgDetail?.doubled) {
+    const doublerName = row.mgDetail.doubler === meId ? "You" : g.players?.[row.mgDetail.doubler]?.name || "They";
+    doubleNote = row.mgDetail.doubleLost
+      ? `<div class="gc-duel-tip-streak">${doublerName} went double-or-nothing and lost it.</div>`
+      : `<div class="gc-duel-tip-streak">${doublerName} went double-or-nothing and won.</div>`;
+  }
+
   return `<span class="f-tag duel gc-duel-badge" style="--mg-color:${meta.color}" tabindex="0">
     ${meta.icon} ${esc(meta.label)}
     <div class="gc-duel-tip">
       <div class="gc-duel-tip-record">${verdict}</div>
       ${detailLine}
+      ${doubleNote}
       ${tieNote}
     </div>
   </span>`;
