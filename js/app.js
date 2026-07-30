@@ -2207,15 +2207,14 @@ function catchUpHtmlFor(catchUp, opp, remainMs) {
   return html;
 }
 
-/** "mm:ss", or "hh:mm:ss" once it runs an hour or past — for the tight
- * per-row catch-up parenthetical, where the compact word form reads noisy. */
+/** Always "hh:mm:ss" (hours uncapped, e.g. "125:07:00") — fixed width so
+ * pace rows line up in a column, unlike the compact word form. */
 function fmtMmSs(seconds) {
   const total = Math.max(0, Math.round(Number(seconds) || 0));
   const h = Math.floor(total / 3600);
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
-  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
-  return `${m}:${String(s).padStart(2, "0")}`;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
 function paceHtmlFor(pace) {
