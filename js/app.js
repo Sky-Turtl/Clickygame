@@ -1107,7 +1107,10 @@ function checkDuelExpiry(g) {
   if (!d) return;
   if (d.status !== "open" && d.status !== "double_offer") return;
 
-  const startedAt = d.status === "double_offer" ? d.decidedAt : d.roundStartAt || d.createdAt;
+  const startedAt = Math.max(
+    (d.status === "double_offer" ? d.decidedAt : d.roundStartAt || d.createdAt) || 0,
+    d.lastActivityAt || 0
+  );
   if (db.now() - startedAt < DUEL_TIMEOUT_MS) return;
 
   db.checkDuelTimeout(g.code, d.id);
