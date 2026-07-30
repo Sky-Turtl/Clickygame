@@ -1064,9 +1064,10 @@ const reactionClearReported = new Map();
 
 /**
  * A reaction duel waits on both sides reporting they've got no other open
- * duel elsewhere before its goAt is set (see engine.applyStartReaction). Each
- * client can only speak for its own player, and only this device knows what
- * other games its own player is in — so it self-reports here.
+ * duel elsewhere, *and* have this tab actually foregrounded, before its goAt
+ * is set (see engine.applyStartReaction). Each client can only speak for its
+ * own player — only this device knows what other games its own player is in,
+ * or whether its own tab is visible — so it self-reports here.
  */
 function checkReactionGate(g) {
   const d = g.state?.duel;
@@ -1078,7 +1079,7 @@ function checkReactionGate(g) {
   const meId = myId(g);
   if (d.challenger !== meId && d.defender !== meId) return;
 
-  const iAmClear = !hasOtherOpenDuel(g.code, d.id);
+  const iAmClear = document.visibilityState === "visible" && !hasOtherOpenDuel(g.code, d.id);
   if (reactionClearReported.get(d.id) === iAmClear) return;
   reactionClearReported.set(d.id, iAmClear);
   db.checkReactionStart(g.code, d.id, meId, iAmClear);
