@@ -1965,7 +1965,7 @@ function paceHtmlFor(pace) {
     .map((w) => {
       const active = w.mine + w.theirs > 0;
       const cls = w.diff > 0 ? "up" : w.diff < 0 ? "down" : "";
-      const text = active ? `${w.diff > 0 ? "+" : w.diff < 0 ? "−" : ""}${fmtDurationShort(Math.abs(w.diff))}` : "—";
+      const text = active ? `${w.diff > 0 ? "+" : w.diff < 0 ? "−" : ""}${fmtMmSs(Math.abs(w.diff))}` : "—";
       const needText = w.need != null ? ` <span class="gc-pace-need">(${fmtMmSs(w.need)} to catch up)</span>` : "";
       return `<div class="gc-pace-row"><span class="gc-pace-label">${esc(w.label)}</span><span class="gc-pace-diff ${cls}">${text}${needText}</span></div>`;
     })
