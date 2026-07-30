@@ -2087,26 +2087,36 @@ function renderDetail() {
  */
 const openFeedRuns = new Map(); // hostId -> Set<runKey>
 
-/** Colored chip for one minigame, titled with my record at it in this game — hover for the numbers. */
-function duelTag(g, minigameKey) {
-  const meta = DUEL_META[minigameKey];
+/** Colored chip for one settled duel — hover/focus for what actually happened in that specific duel. */
+function duelTag(g, row) {
+  const meta = DUEL_META[row.game];
   if (!meta) return '<span class="f-tag duel">DUEL</span>';
   const meId = myId(g);
-  let wins = 0,
-    losses = 0,
-    ties = 0;
-  for (const c of g.claims || []) {
-    if (!c.viaDuel || c.status !== "settled" || c.game !== minigameKey) continue;
-    if (c.by === meId) wins++;
-    else losses++;
-    ties += c.ties || 0;
+  const verdict = row.mine
+    ? `<span class="win">You won</span>`
+    : `<span class="loss">${esc(g.players?.[row.by]?.name || "They")} won</span>`;
+
+  let detailLine = "";
+  if (row.mgDetail?.detail || row.mgDetail?.picks) {
+    const oppId = row.mgDetail.challenger === meId ? row.mgDetail.defender : row.mgDetail.challenger;
+    const oppName = g.players?.[oppId]?.name || "They";
+    const d = {
+      game: row.game,
+      finalPicks: row.mgDetail.picks || {},
+      detail: row.mgDetail.detail || {},
+      challenger: row.mgDetail.challenger,
+    };
+    detailLine = `<div class="gc-duel-tip-streak">${resultDetailHtml(d, meId, oppId, oppName)}</div>`;
   }
+
+  const tieNote = row.ties ? `<div class="gc-duel-tip-streak">${row.ties} redraw${row.ties === 1 ? "" : "s"} first</div>` : "";
+
   return `<span class="f-tag duel gc-duel-badge" style="--mg-color:${meta.color}" tabindex="0">
     ${meta.icon} ${esc(meta.label)}
     <div class="gc-duel-tip">
-      <div class="gc-duel-tip-record">
-        <span class="win">${wins}W</span> · <span class="loss">${losses}L</span> · <span class="tie">${ties} tie${ties === 1 ? "" : "s"}</span>
-      </div>
+      <div class="gc-duel-tip-record">${verdict}</div>
+      ${detailLine}
+      ${tieNote}
     </div>
   </span>`;
 }
@@ -2145,7 +2155,7 @@ function renderFeed(hostId, g, limit) {
             const tags =
               (run.anyDoubled ? '<span class="f-tag x2">2x</span>' : "") +
               (run.duelGames.length
-                ? run.duelGames.map((k) => duelTag(g, k)).join("")
+                ? run.duelGames.map((k) => duelTag(g, run.duelReps[k])).join("")
                 : run.anyDuel
                   ? '<span class="f-tag duel">DUEL</span>'
                   : "") +
@@ -2170,7 +2180,7 @@ function renderFeed(hostId, g, limit) {
                   <span class="split-n">#${i.order}</span>
                   <span class="f-amt">${fmtDuration(i.seconds)}</span>
                   ${i.multiplier > 1 ? '<span class="f-tag x2">2x</span>' : ""}
-                  ${i.viaDuel ? (i.game ? duelTag(g, i.game) : '<span class="f-tag duel">DUEL</span>') : ""}
+                  ${i.viaDuel ? (i.game ? duelTag(g, i) : '<span class="f-tag duel">DUEL</span>') : ""}
                   <span class="f-when">${fmtAgo(db.now() - i.at)}</span>
                 </li>`
               )

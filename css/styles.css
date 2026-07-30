@@ -398,7 +398,7 @@ input[type=date] { color-scheme: dark; }
   opacity: 0;
   visibility: hidden;
   transform: translateY(-4px);
-  transition: opacity .12s, transform .12s, visibility .12s;
+  transition: opacity .04s, transform .04s;
   pointer-events: none;
   box-shadow: 0 8px 24px rgba(0,0,0,.35);
 }
