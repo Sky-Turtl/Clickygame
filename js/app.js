@@ -1263,23 +1263,21 @@ function paceFor(g) {
   const theirs = rows[opp.id]?.all.claimed || 0;
   const lead = mine - theirs;
 
-  // What you'd personally need to claim per that same bucket size, sustained
-  // for the rest of the game, to erase the gap exactly by the deadline —
-  // assuming the opponent keeps claiming at the rate they've shown in that
-  // same window. That's their per-bucket rate (`t`, since the window IS one
-  // bucket) plus the margin needed to close the gap (the deficit spread
-  // evenly over the remaining time). A rough guide, not the exact math
-  // `catchUpWindow` does — it doesn't account for exactly where 2x windows
-  // fall, or assume the opponent's pace actually holds.
+  // How much more, per that same bucket size, you'd need to be ahead of your
+  // opponent by — sustained for the rest of the game — to erase the gap
+  // exactly by the deadline. That's the deficit spread evenly over the
+  // remaining time. Compared directly against `diff` (what you're actually
+  // up by in that window) to flag when the real margin is falling short.
+  // A rough guide, not the exact math `catchUpWindow` does — it doesn't
+  // account for exactly where 2x windows fall.
   const remainMs = Math.max(0, g.meta.endsAt - db.now());
 
-  const windows = ["1h", "6h", "1d"].map((key) => {
+  const windows = ["1h", "6h", "1d", "3d"].map((key) => {
     const p = PERIODS.find((x) => x.key === key);
     const m = rows[myId(g)]?.[key]?.claimed || 0;
     const t = rows[opp.id]?.[key]?.claimed || 0;
-    const margin = lead !== 0 && remainMs > 0 ? Math.abs(lead) * (p.ms / remainMs) : null;
-    const needSelf = margin != null ? t + margin : null;
-    return { key, label: p.label, ms: p.ms, mine: m, theirs: t, diff: m - t, needSelf };
+    const need = lead !== 0 && remainMs > 0 ? Math.abs(lead) * (p.ms / remainMs) : null;
+    return { key, label: p.label, ms: p.ms, mine: m, theirs: t, diff: m - t, need };
   });
 
   // Prefer the freshest window that actually has activity in it, so a quiet
@@ -1968,9 +1966,13 @@ function paceHtmlFor(pace) {
   const rows = pace.windows
     .map((w) => {
       const active = w.mine + w.theirs > 0;
-      const cls = w.diff > 0 ? "up" : w.diff < 0 ? "down" : "";
+      // Red whenever the margin you're actually up by is falling short of
+      // what you'd need to sustain to close the gap by the deadline —
+      // regardless of whether that margin is nominally positive or negative.
+      const short = w.need != null && w.diff < w.need;
+      const cls = short ? "short" : w.diff > 0 ? "up" : w.diff < 0 ? "down" : "";
       const text = active ? `${w.diff > 0 ? "+" : w.diff < 0 ? "−" : ""}${fmtMmSs(Math.abs(w.diff))}` : "—";
-      const needText = w.needSelf != null ? ` <span class="gc-pace-need">(need ${fmtMmSs(w.needSelf)})</span>` : "";
+      const needText = w.need != null ? ` <span class="gc-pace-need">(need ${fmtMmSs(w.need)})</span>` : "";
       return `<div class="gc-pace-row"><span class="gc-pace-label">${esc(w.label)}</span><span class="gc-pace-diff ${cls}">${text}${needText}</span></div>`;
     })
     .join("");

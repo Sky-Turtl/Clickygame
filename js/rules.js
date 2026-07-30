@@ -188,6 +188,7 @@ export const PERIODS = [
   { key: "1h", label: "Last hour", ms: 3600e3 },
   { key: "6h", label: "Last 6 hours", ms: 6 * 3600e3 },
   { key: "1d", label: "Last day", ms: 24 * 3600e3 },
+  { key: "3d", label: "Last 3 days", ms: 3 * 24 * 3600e3 },
   { key: "1w", label: "Last week", ms: 7 * 24 * 3600e3 },
   { key: "1mo", label: "Last month", ms: 30 * 24 * 3600e3 },
   { key: "all", label: "All time", ms: Infinity },
