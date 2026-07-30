@@ -320,12 +320,19 @@ input[type=date] { color-scheme: dark; }
   body.screen-profile #app,
   body.screen-detail #app { max-width: 1040px; }
 
-  /* Each dash-col is a vertical stack; the dashboard is a row of 1-3 of
-     them. Dragging a box onto a column stacks it there (pushing the rest
-     of that column down); dragging past the outer edge of the leftmost or
-     rightmost column adds a new one (max 3) — see initDashboard() in
-     app.js. A column that ends up empty is removed automatically (min 1). */
+  /* .box-dashboard stacks vertically: a .dash-cols row of 1-3 vertical
+     stacks (.dash-col) on top, then any "wide" (full-width) boxes below.
+     Dragging a box onto a column stacks it there (pushing the rest of that
+     column down); dragging past the outer edge of the leftmost/rightmost
+     column adds a new one (max 3); dragging below the columns — or resizing
+     a box far enough to the right — makes it full-width instead. See
+     initDashboard() in app.js. A column left empty is removed (min 1). */
   .box-dashboard {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .dash-cols {
     display: flex;
     align-items: flex-start;
     gap: 14px;
