@@ -723,7 +723,33 @@ function renderMinigameRecord(list) {
  * — that filter narrows the period table to one type, this shows all of them
  * side by side.
  */
+/**
+ * Which minigame rows are expanded in the profile breakdown. This screen
+ * re-renders on the same 200ms tick as everything else, so without baking
+ * the open state back into the markup every render, the very next tick would
+ * blow away a <details> the instant you opened it — same issue and same fix
+ * as the feed's `openFeedRuns` above.
+ */
+const openMinigameRows = new Set();
+let minigameBreakdownWired = false;
+
 function renderMinigameBreakdown(list, gameFilter) {
+  const host = $("profile-minigame-breakdown");
+  if (!minigameBreakdownWired) {
+    minigameBreakdownWired = true;
+    // `toggle` doesn't bubble, but a capturing listener still sees it on the way down.
+    host.addEventListener(
+      "toggle",
+      (e) => {
+        const li = e.target.closest?.("[data-key]");
+        if (!li || e.target.tagName !== "DETAILS") return;
+        if (e.target.open) openMinigameRows.add(li.dataset.key);
+        else openMinigameRows.delete(li.dataset.key);
+      },
+      true
+    );
+  }
+
   const byType = {}; // minigame key -> { wins, losses, ties, entries }
   for (const key of Object.keys(DUEL_META)) byType[key] = { wins: 0, losses: 0, ties: 0, entries: [] };
 
@@ -748,8 +774,8 @@ function renderMinigameBreakdown(list, gameFilter) {
       const { wins, losses, ties, entries } = byType[key];
       const total = wins + losses;
       const pct = total ? `${Math.round((wins / total) * 100)}%` : "—";
-      return `<li class="mg-row" style="--mg-color:${meta.color}">
-        <details>
+      return `<li class="mg-row" style="--mg-color:${meta.color}" data-key="${key}">
+        <details ${openMinigameRows.has(key) ? "open" : ""}>
           <summary>
             <span class="mg-tag">${meta.icon} ${esc(meta.label)}</span>
             <span class="mg-rec">${wins}W – ${losses}L${ties ? ` – ${ties}T` : ""}</span>
@@ -761,7 +787,7 @@ function renderMinigameBreakdown(list, gameFilter) {
     })
     .join("");
 
-  $("profile-minigame-breakdown").innerHTML = html;
+  setHTML("profile-minigame-breakdown", html);
 }
 
 const mean = (arr) => arr.reduce((s, v) => s + v, 0) / arr.length;
