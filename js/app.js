@@ -213,6 +213,17 @@ function applyDashLayout(dash, screenKey) {
     else delete box.dataset.span;
     if (entry.height) box.style.height = entry.height;
   }
+
+  // Content (e.g. detail screen) may still be about to render into these
+  // boxes, so re-check the saved heights next frame and don't let any box
+  // sit shorter than its content — that's what causes a scrollbar.
+  requestAnimationFrame(() => {
+    for (const box of dash.children) {
+      if (box.style.height && box.scrollHeight > box.clientHeight) {
+        box.style.height = box.scrollHeight + "px";
+      }
+    }
+  });
 }
 
 /** Wires up drag-to-rearrange + resize for a dashboard's boxes (desktop only; a no-op on repeat calls). */
@@ -279,11 +290,15 @@ function initDashboard(dashId, screenKey) {
       const startWidth = box.getBoundingClientRect().width;
       const startHeight = box.getBoundingClientRect().height;
       const startSpan = box.dataset.span === "2" ? 2 : 1;
+      // scrollHeight reflects the box's full content height even while
+      // overflow:auto is clipping it, so this is the shortest it can go
+      // without a scrollbar appearing.
+      const minHeight = Math.max(70, box.scrollHeight);
 
       const onMove = (ev) => {
         const dx = ev.clientX - startX;
         const dy = ev.clientY - startY;
-        const newHeight = Math.max(70, startHeight + dy);
+        const newHeight = Math.max(minHeight, startHeight + dy);
         box.style.height = newHeight + "px";
         const wantsWide = startWidth + dx > startWidth * 1.25;
         const wantsNarrow = startWidth + dx < startWidth * 0.75;
