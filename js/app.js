@@ -214,18 +214,9 @@ function applyDashLayout(dash, screenKey) {
     else delete box.dataset.span;
     if (entry.height) box.style.height = entry.height;
   }
-
-  // Content (e.g. detail screen) may still be about to render into these
-  // boxes, so re-check the saved heights next frame and don't let any box
-  // sit shorter than its content — that's what causes a scrollbar.
-  requestAnimationFrame(() => {
-    for (const box of dash.children) {
-      if (box.style.height && box.scrollHeight > box.clientHeight) {
-        box.style.height = box.scrollHeight + "px";
-      }
-    }
-  });
 }
+
+const DASH_MIN_BOX_HEIGHT = 40;
 
 /** Wires up drag-to-rearrange + resize for a dashboard's boxes (desktop only; a no-op on repeat calls). */
 function initDashboard(dashId, screenKey) {
@@ -238,13 +229,21 @@ function initDashboard(dashId, screenKey) {
   let dragging = null;
 
   for (const box of dash.querySelectorAll(".dash-box")) {
-    if (box.querySelector(".dash-box-handle")) continue; // already wired (layout reload after login)
+    if (box.querySelector(".dash-box-content")) continue; // already wired (layout reload after login)
+
+    // Move the box's real content into a scrolling wrapper so the box
+    // itself never scrolls — that keeps the handle/resize grip (siblings,
+    // pinned to the box's corners) fixed in place while content scrolls.
+    const content = document.createElement("div");
+    content.className = "dash-box-content";
+    while (box.firstChild) content.appendChild(box.firstChild);
+    box.appendChild(content);
 
     const handle = document.createElement("div");
     handle.className = "dash-box-handle";
     handle.title = "Drag to rearrange";
     handle.textContent = "⠿";
-    box.prepend(handle);
+    box.append(handle);
 
     const resizer = document.createElement("div");
     resizer.className = "dash-box-resize";
@@ -291,15 +290,11 @@ function initDashboard(dashId, screenKey) {
       const startWidth = box.getBoundingClientRect().width;
       const startHeight = box.getBoundingClientRect().height;
       const startSpan = box.dataset.span === "2" ? 2 : 1;
-      // scrollHeight reflects the box's full content height even while
-      // overflow:auto is clipping it, so this is the shortest it can go
-      // without a scrollbar appearing.
-      const minHeight = Math.max(70, box.scrollHeight);
 
       const onMove = (ev) => {
         const dx = ev.clientX - startX;
         const dy = ev.clientY - startY;
-        const newHeight = Math.max(minHeight, startHeight + dy);
+        const newHeight = Math.max(DASH_MIN_BOX_HEIGHT, startHeight + dy);
         box.style.height = newHeight + "px";
         const wantsWide = startWidth + dx > startWidth * 1.25;
         const wantsNarrow = startWidth + dx < startWidth * 0.75;
