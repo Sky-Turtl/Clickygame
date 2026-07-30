@@ -147,8 +147,9 @@ export function mountGolf(container, seed, round, onDone) {
       ctx.fill();
     }
     if ((dragging || pending) && dragTo) {
+      const pullPower = Math.hypot(dragTo.x - ball.x, dragTo.y - ball.y) / MAX_PULL;
       ctx.strokeStyle = "rgba(255,255,255,.55)";
-      ctx.lineWidth = 2;
+      ctx.lineWidth = 2 + pullPower * 6;
       ctx.beginPath();
       ctx.moveTo(ball.x, ball.y);
       ctx.lineTo(dragTo.x, dragTo.y);
