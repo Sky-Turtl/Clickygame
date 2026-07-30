@@ -68,7 +68,9 @@ function resolveGame(duel, a, b, ctx) {
       const target = 1 + Math.floor(seededFloat(`${duel.id}|${ctx.at}|target`) * 10); // 1-10
       const da = Math.abs(Number(a) - target);
       const db = Math.abs(Number(b) - target);
-      return { verdict: da < db ? 1 : da > db ? -1 : 0, detail: { target } };
+      const verdict = da < db ? 1 : da > db ? -1 : 0;
+      const exact = (verdict > 0 && da === 0) || (verdict < 0 && db === 0);
+      return { verdict, detail: { target, exact } };
     }
     case "coin": {
       // Both sides call heads or tails before the flip. Calling it right wins;
@@ -252,7 +254,7 @@ export function applySettle(duel, ctx) {
     loser,
     finalPicks: picks,
     detail,
-    payoutMultiplier: 1,
+    payoutMultiplier: duel.game === "closest" && detail?.exact ? 5 : 1,
     resolvedAt: ctx.at,
     // Our fingerprint: whichever client's value survives the transaction is the
     // one responsible for writing the settlement to the claims log.

@@ -3098,7 +3098,7 @@ function resultDetailHtml(d, meId, oppId, oppName) {
     case "closest":
       return `You guessed ${esc(String(picks[meId]))} · ${esc(oppName)} guessed ${esc(
         String(picks[oppId])
-      )} · target was ${detail.target}`;
+      )} · target was ${detail.target}${detail.exact ? " · exact match! 5x payout" : ""}`;
     case "coin": {
       const mineCall = picks[meId] === "heads" ? "heads" : "tails";
       const oppCall = picks[oppId] === "heads" ? "heads" : "tails";
