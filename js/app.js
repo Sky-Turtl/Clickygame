@@ -712,6 +712,50 @@ function renderMinigameRecord(list) {
       } have a minigame type recorded (from before minigame variety shipped) and won't show up under a specific minigame — only under "All minigames".`
     );
   }
+
+  renderMinigameBreakdown(list, gameFilter);
+}
+
+/**
+ * All-time record broken out per minigame type (rather than one combined
+ * total), so a lopsided coin-flip record doesn't hide behind a good overall
+ * win rate. Always all-time and independent of the minigame-type filter above
+ * — that filter narrows the period table to one type, this shows all of them
+ * side by side.
+ */
+function renderMinigameBreakdown(list, gameFilter) {
+  const byType = {}; // minigame key -> { wins, losses, ties }
+  for (const key of Object.keys(DUEL_META)) byType[key] = { wins: 0, losses: 0, ties: 0 };
+
+  for (const g of list) {
+    if (gameFilter !== "__all__" && g.code !== gameFilter) continue;
+    const meId = myId(g);
+    const opp = opponentOf(g);
+    if (!opp) continue;
+    for (const c of g.claims || []) {
+      if (!c.viaDuel || c.status !== "settled" || !c.game || !byType[c.game]) continue;
+      const won = c.by === meId;
+      if (!won && c.by !== opp.id) continue;
+      if (won) byType[c.game].wins++;
+      else byType[c.game].losses++;
+      byType[c.game].ties += c.ties || 0;
+    }
+  }
+
+  const head = `<thead><tr><th>Minigame</th><th>Wins</th><th>Losses</th><th>Ties</th><th>Win%</th></tr></thead>`;
+  const body =
+    `<tbody>` +
+    Object.entries(DUEL_META)
+      .map(([key, meta]) => {
+        const { wins, losses, ties } = byType[key];
+        const total = wins + losses;
+        const pct = total ? `${Math.round((wins / total) * 100)}%` : "—";
+        return `<tr><td>${meta.icon} ${esc(meta.label)}</td><td class="num">${wins}</td><td class="num">${losses}</td><td class="num">${ties}</td><td class="num">${pct}</td></tr>`;
+      })
+      .join("") +
+    `</tbody>`;
+
+  setHTML("profile-minigame-breakdown", head + body);
 }
 
 // --- Derived helpers --------------------------------------------------------
@@ -816,6 +860,68 @@ function openDuelFor(g) {
   if (!duelUnsettled(d)) return null;
   if (d.challenger !== myId(g) && d.defender !== myId(g)) return null;
   return d;
+}
+
+/**
+ * Duel history for a single (1v1) game: overall record against this
+ * opponent, the individual settled duels (most recent first), and how many
+ * of the most recent claims in a row were contested — a "hot streak" of
+ * disputes rather than clean claims.
+ */
+function duelStatsFor(g) {
+  const meId = myId(g);
+  const opp = opponentOf(g);
+  const claims = g.claims || [];
+
+  const settled = claims.filter((c) => c.status === "settled");
+  let streak = 0;
+  for (let i = settled.length - 1; i >= 0; i--) {
+    if (!settled[i].viaDuel) break;
+    streak++;
+  }
+
+  const history = [];
+  let wins = 0, losses = 0, ties = 0;
+  for (const c of claims) {
+    if (!c.viaDuel || c.status !== "settled") continue;
+    const won = c.by === meId;
+    if (!won && opp && c.by !== opp.id) continue; // shouldn't happen in a 1v1
+    if (won) wins++; else losses++;
+    ties += c.ties || 0;
+    history.push({ at: c.at, game: c.game || null, won, ties: c.ties || 0 });
+  }
+  history.sort((a, b) => b.at - a.at);
+
+  return { wins, losses, ties, streak, history };
+}
+
+/** The game-card badge for a currently-open duel: which minigame, hoverable for the matchup's history. */
+function duelBadgeFor(g, duel) {
+  const meta = DUEL_META[duel.game] || DUEL_META.rps;
+  const opp = opponentOf(g);
+  const stats = duelStatsFor(g);
+
+  const rows = stats.history
+    .slice(0, 8)
+    .map((h) => {
+      const hMeta = h.game ? DUEL_META[h.game] : null;
+      const label = hMeta ? `${hMeta.icon} ${hMeta.label}` : "Unknown minigame";
+      const tieNote = h.ties ? ` · ${h.ties} tie${h.ties === 1 ? "" : "s"} first` : "";
+      return `<li class="${h.won ? "win" : "loss"}">${h.won ? "You won" : `${esc(opp?.name || "They")} won`} — ${esc(label)}${tieNote}</li>`;
+    })
+    .join("");
+
+  return `
+    <span class="gc-flag duel gc-duel-badge" tabindex="0">
+      ${meta.icon} ${esc(meta.label)}
+      <div class="gc-duel-tip">
+        <div class="gc-duel-tip-record">
+          <span class="win">${stats.wins}W</span> · <span class="loss">${stats.losses}L</span> · <span class="tie">${stats.ties} tie${stats.ties === 1 ? "" : "s"}</span>
+        </div>
+        ${stats.streak > 1 ? `<div class="gc-duel-tip-streak">⚔ ${stats.streak} contested claims in a row</div>` : ""}
+        ${rows ? `<ul class="gc-duel-tip-list">${rows}</ul>` : `<p class="gc-duel-tip-empty">No past duels yet — this is the first.</p>`}
+      </div>
+    </span>`;
 }
 
 /** Duels I'm in that need an action from me — these block the claim button. */
@@ -1296,13 +1402,15 @@ function renderGameList() {
         status ? status.cls : "", catchUp ? `${catchUp.final}|${catchUp.forMe}|${catchUp.leftMs < 3600e3}` : "",
       ].join("|"));
 
+      const duelBadgeHtml = duel ? duelBadgeFor(g, duel) : "";
+
       return `
       <div class="game-card ${over ? "over" : ""} ${duel ? "duel" : ""}" data-code="${esc(g.code)}">
         <div class="gc-main" data-open="${esc(g.code)}">
           <div class="gc-head">
             <span class="gc-name">${esc(gameLabel(g))}</span>
             ${hot ? '<span class="gc-flag hot">2x</span>' : ""}
-            ${duel ? '<span class="gc-flag duel">DUEL</span>' : ""}
+            ${duelBadgeHtml}
             ${over ? '<span class="gc-flag over">ENDED</span>' : ""}
           </div>
           <div class="gc-bar">
