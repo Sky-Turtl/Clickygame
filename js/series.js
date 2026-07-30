@@ -28,6 +28,7 @@ export function claimRows(claims, meId) {
       rawSeconds: c.rawSeconds || 0,
       multiplier: c.multiplier || 1,
       viaDuel: !!c.viaDuel,
+      game: c.viaDuel ? c.game || null : null,
     }));
 }
 
@@ -52,6 +53,7 @@ export function groupRuns(rows) {
       last.count = last.items.length;
       if (r.multiplier > 1) last.anyDoubled = true;
       if (r.viaDuel) last.anyDuel = true;
+      if (r.viaDuel && r.game && !last.duelGames.includes(r.game)) last.duelGames.push(r.game);
     } else {
       out.push({
         by: r.by,
@@ -64,6 +66,7 @@ export function groupRuns(rows) {
         to: r.at,
         anyDoubled: r.multiplier > 1,
         anyDuel: !!r.viaDuel,
+        duelGames: r.viaDuel && r.game ? [r.game] : [],
       });
     }
   }

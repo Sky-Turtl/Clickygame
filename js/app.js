@@ -750,7 +750,7 @@ function renderMinigameBreakdown(list, gameFilter) {
         const { wins, losses, ties } = byType[key];
         const total = wins + losses;
         const pct = total ? `${Math.round((wins / total) * 100)}%` : "—";
-        return `<tr><td>${meta.icon} ${esc(meta.label)}</td><td class="num">${wins}</td><td class="num">${losses}</td><td class="num">${ties}</td><td class="num">${pct}</td></tr>`;
+        return `<tr><td style="color:${meta.color}">${meta.icon} ${esc(meta.label)}</td><td class="num">${wins}</td><td class="num">${losses}</td><td class="num">${ties}</td><td class="num">${pct}</td></tr>`;
       })
       .join("") +
     `</tbody>`;
@@ -912,7 +912,7 @@ function duelBadgeFor(g, duel) {
     .join("");
 
   return `
-    <span class="gc-flag duel gc-duel-badge" tabindex="0">
+    <span class="gc-flag duel gc-duel-badge" style="--mg-color:${meta.color}" tabindex="0">
       ${meta.icon} ${esc(meta.label)}
       <div class="gc-duel-tip">
         <div class="gc-duel-tip-record">
@@ -1940,6 +1940,24 @@ function renderDetail() {
  */
 const openFeedRuns = new Map(); // hostId -> Set<runKey>
 
+/** Colored chip for one minigame, titled with my record at it in this game — hover for the numbers. */
+function duelTag(g, minigameKey) {
+  const meta = DUEL_META[minigameKey];
+  if (!meta) return '<span class="f-tag duel">DUEL</span>';
+  const meId = myId(g);
+  let wins = 0,
+    losses = 0;
+  for (const c of g.claims || []) {
+    if (!c.viaDuel || c.status !== "settled" || c.game !== minigameKey) continue;
+    if (c.by === meId) wins++;
+    else losses++;
+  }
+  const total = wins + losses;
+  const pct = total ? ` (${Math.round((wins / total) * 100)}%)` : "";
+  const title = `${meta.label} — you: ${wins}W-${losses}L${pct}`;
+  return `<span class="f-tag duel" style="--mg-color:${meta.color}" title="${esc(title)}">${meta.icon} ${esc(meta.label)}</span>`;
+}
+
 function renderFeed(hostId, g, limit) {
   const host = $(hostId);
   let openSet = openFeedRuns.get(hostId);
@@ -1973,7 +1991,11 @@ function renderFeed(hostId, g, limit) {
             const who = g.players?.[run.by]?.name || "?";
             const tags =
               (run.anyDoubled ? '<span class="f-tag x2">2x</span>' : "") +
-              (run.anyDuel ? '<span class="f-tag duel">DUEL</span>' : "") +
+              (run.duelGames.length
+                ? run.duelGames.map((k) => duelTag(g, k)).join("")
+                : run.anyDuel
+                  ? '<span class="f-tag duel">DUEL</span>'
+                  : "") +
               (run.items.some((i) => i.id === escrowedId)
                 ? '<span class="f-tag duel">ESCROW</span>'
                 : "");
@@ -1995,7 +2017,7 @@ function renderFeed(hostId, g, limit) {
                   <span class="split-n">#${i.order}</span>
                   <span class="f-amt">${fmtDuration(i.seconds)}</span>
                   ${i.multiplier > 1 ? '<span class="f-tag x2">2x</span>' : ""}
-                  ${i.viaDuel ? '<span class="f-tag duel">DUEL</span>' : ""}
+                  ${i.viaDuel ? (i.game ? duelTag(g, i.game) : '<span class="f-tag duel">DUEL</span>') : ""}
                   <span class="f-when">${fmtAgo(db.now() - i.at)}</span>
                 </li>`
               )

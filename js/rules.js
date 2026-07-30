@@ -95,31 +95,37 @@ export const DUEL_META = {
   rps: {
     label: "Rock Paper Scissors",
     icon: "✊",
+    color: "#6d8bff",
     rule: "Best of one. Rock beats scissors, scissors beats paper, paper beats rock.",
   },
   closest: {
     label: "Closest guess",
     icon: "🎯",
+    color: "#b98cff",
     rule: "Guess a number from 1–10. Whoever's closest to the secret target wins.",
   },
   coin: {
     label: "Coin flip",
     icon: "🪙",
+    color: "#ffc94d",
     rule: "Call heads or tails before the flip. Call it right and you win — call the same side as them and it's a redraw. The winner can then take it or go double-or-nothing on one more flip.",
   },
   dice: {
     label: "Dice roll",
     icon: "🎲",
+    color: "#ff5c72",
     rule: "Roll a die each. Higher roll wins; a tie rolls again.",
   },
   reaction: {
     label: "Reaction test",
     icon: "⚡",
+    color: "#3ddc97",
     rule: "Wait for GO, then tap as fast as you can. Jumping the gun loses outright.",
   },
   golf: {
     label: "Mini golf",
     icon: "⛳",
+    color: "#4dd0e1",
     rule: "One putt each — drag back and release. Closest to the hole wins; sink it and you can't lose.",
   },
 };

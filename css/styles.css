@@ -371,7 +371,7 @@ input[type=date] { color-scheme: dark; }
   padding: 2px 6px; border-radius: 5px; flex: none;
 }
 .gc-flag.hot { background: rgba(255,201,77,.18); color: var(--gold); }
-.gc-flag.duel { background: rgba(255,92,114,.18); color: var(--red); }
+.gc-flag.duel { background: color-mix(in srgb, var(--mg-color, var(--red)) 18%, transparent); color: var(--mg-color, var(--red)); }
 .gc-flag.over { background: rgba(255,255,255,.08); color: var(--text-faint); }
 .gc-flag.win { background: rgba(61,220,151,.18); color: var(--green); }
 .gc-flag.loss { background: rgba(255,92,114,.18); color: var(--red); }
@@ -618,7 +618,11 @@ input[type=date] { color-scheme: dark; }
   font-weight: 700;
 }
 .f-tag.x2 { background: rgba(255,201,77,.16); color: var(--gold); }
-.f-tag.duel { background: rgba(255,92,114,.16); color: var(--red); }
+.f-tag.duel {
+  background: color-mix(in srgb, var(--mg-color, var(--red)) 16%, transparent);
+  color: var(--mg-color, var(--red));
+  cursor: default;
+}
 
 /* Collapsed run of consecutive claims by one player */
 .feed li.run { display: block; padding: 0; }
