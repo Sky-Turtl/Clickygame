@@ -163,47 +163,82 @@ let leadZoom = null;
 function showScreen(which) {
   for (const s of ["setup", "hub", "detail", "profile"]) {
     $("screen-" + s).classList.toggle("hidden", s !== which);
+    document.body.classList.toggle("screen-" + s, s === which);
   }
-  document.body.classList.toggle("profile-active", which === "profile");
   window.scrollTo(0, 0);
   if (which === "setup") renderRejoin();
   if (which === "profile") { renderProfile(); initProfileDashboard(); }
+  if (which === "detail") initDetailDashboard();
 }
 
-// --- Profile dashboard (desktop drag-to-rearrange) --------------------------
+// --- Box dashboards (desktop drag-to-rearrange + resize, synced to the account) --
 
-const PROFILE_ORDER_KEY = "clicky-profile-dashboard-order";
-let profileDashboardInited = false;
+const DASH_LAYOUT_KEY = "clicky-dashboard-layout-v2";
+const dashInited = new Set(); // dash element ids already wired up
 
-function saveProfileDashboardOrder(dash) {
-  const order = [...dash.children].map((box) => box.dataset.box);
-  try { localStorage.setItem(PROFILE_ORDER_KEY, JSON.stringify(order)); } catch {}
-}
+/** { profile: [{id, span, height}], detail: [...] } | null while unloaded */
+let dashboardLayout = loadLocalDashboardLayout();
 
-function applyProfileDashboardOrder(dash) {
-  let saved;
-  try { saved = JSON.parse(localStorage.getItem(PROFILE_ORDER_KEY) || "null"); } catch { saved = null; }
-  if (!Array.isArray(saved)) return;
-  const boxes = new Map([...dash.children].map((box) => [box.dataset.box, box]));
-  for (const key of saved) {
-    const box = boxes.get(key);
-    if (box) dash.appendChild(box);
+function loadLocalDashboardLayout() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(DASH_LAYOUT_KEY) || "null");
+    return raw && typeof raw === "object" ? raw : {};
+  } catch {
+    return {};
   }
 }
 
-/** Wires up drag-to-rearrange for the profile dashboard boxes (desktop only; a no-op on repeat calls). */
-function initProfileDashboard() {
-  const dash = $("profile-dashboard");
+function saveDashboardLayout() {
+  try { localStorage.setItem(DASH_LAYOUT_KEY, JSON.stringify(dashboardLayout)); } catch {}
+  if (account) db.setAccountDashboardLayout(account.uid, dashboardLayout).catch(() => {});
+}
+
+function captureDashLayout(dash, screenKey) {
+  dashboardLayout[screenKey] = [...dash.children].map((box) => ({
+    id: box.dataset.box,
+    span: box.dataset.span === "2" ? 2 : 1,
+    height: box.style.height || null,
+  }));
+  saveDashboardLayout();
+}
+
+function applyDashLayout(dash, screenKey) {
+  const saved = dashboardLayout[screenKey];
+  if (!Array.isArray(saved)) return;
+  const boxes = new Map([...dash.children].map((box) => [box.dataset.box, box]));
+  for (const entry of saved) {
+    const box = boxes.get(entry.id);
+    if (!box) continue;
+    dash.appendChild(box);
+    if (entry.span === 2) box.dataset.span = "2";
+    else delete box.dataset.span;
+    if (entry.height) box.style.height = entry.height;
+  }
+}
+
+/** Wires up drag-to-rearrange + resize for a dashboard's boxes (desktop only; a no-op on repeat calls). */
+function initDashboard(dashId, screenKey) {
+  const dash = $(dashId);
   if (!dash) return;
-  applyProfileDashboardOrder(dash);
-  if (profileDashboardInited) return;
-  profileDashboardInited = true;
+  applyDashLayout(dash, screenKey);
+  if (dashInited.has(dashId)) return;
+  dashInited.add(dashId);
 
   let dragging = null;
 
   for (const box of dash.querySelectorAll(".dash-box")) {
-    const handle = box.querySelector(".dash-box-handle");
-    if (!handle) continue;
+    if (box.querySelector(".dash-box-handle")) continue; // already wired (layout reload after login)
+
+    const handle = document.createElement("div");
+    handle.className = "dash-box-handle";
+    handle.title = "Drag to rearrange";
+    handle.textContent = "⠿";
+    box.prepend(handle);
+
+    const resizer = document.createElement("div");
+    resizer.className = "dash-box-resize";
+    resizer.title = "Drag to resize";
+    box.append(resizer);
 
     handle.addEventListener("mousedown", () => { box.draggable = true; });
     handle.addEventListener("mouseup", () => { box.draggable = false; });
@@ -218,7 +253,7 @@ function initProfileDashboard() {
       box.classList.remove("dragging");
       for (const b of dash.querySelectorAll(".dash-box")) b.classList.remove("drag-over");
       dragging = null;
-      saveProfileDashboardOrder(dash);
+      captureDashLayout(dash, screenKey);
     });
     box.addEventListener("dragover", (e) => {
       if (!dragging || dragging === box) return;
@@ -236,8 +271,40 @@ function initProfileDashboard() {
       if (from < to) dash.insertBefore(dragging, box.nextSibling);
       else dash.insertBefore(dragging, box);
     });
+
+    resizer.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      resizer.setPointerCapture(e.pointerId);
+      const startX = e.clientX;
+      const startY = e.clientY;
+      const startWidth = box.getBoundingClientRect().width;
+      const startHeight = box.getBoundingClientRect().height;
+      const startSpan = box.dataset.span === "2" ? 2 : 1;
+
+      const onMove = (ev) => {
+        const dx = ev.clientX - startX;
+        const dy = ev.clientY - startY;
+        const newHeight = Math.max(70, startHeight + dy);
+        box.style.height = newHeight + "px";
+        const wantsWide = startWidth + dx > startWidth * 1.25;
+        const wantsNarrow = startWidth + dx < startWidth * 0.75;
+        if (startSpan === 1 && wantsWide) box.dataset.span = "2";
+        else if (startSpan === 2 && wantsNarrow) delete box.dataset.span;
+      };
+      const onUp = (ev) => {
+        resizer.releasePointerCapture(ev.pointerId);
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        captureDashLayout(dash, screenKey);
+      };
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    });
   }
 }
+
+function initProfileDashboard() { initDashboard("profile-dashboard", "profile"); }
+function initDetailDashboard() { initDashboard("detail-dashboard", "detail"); }
 
 /** The main screen: the hub once you're in a game, otherwise setup. */
 function goHome() {
@@ -585,6 +652,18 @@ async function onAccountChange(acct) {
   roster = objToRoster(merged);
   store.set(ROSTER_KEY, roster);
   for (const r of roster) watchGameCode(r.code);
+
+  // The account's saved dashboard layout wins over whatever this device had
+  // locally — signing in on a second device should show the same layout.
+  const serverLayout = await db.getAccountDashboardLayout(acct.uid);
+  if (serverLayout) {
+    dashboardLayout = serverLayout;
+    try { localStorage.setItem(DASH_LAYOUT_KEY, JSON.stringify(dashboardLayout)); } catch {}
+    if (!$("screen-profile").classList.contains("hidden")) initProfileDashboard();
+    if (!$("screen-detail").classList.contains("hidden")) initDetailDashboard();
+  } else if (Object.keys(dashboardLayout).length) {
+    await db.setAccountDashboardLayout(acct.uid, dashboardLayout);
+  }
 
   // Land on the hub if logging in surfaced games and we're just sitting on
   // setup — but don't yank the screen out from under someone mid-game.
