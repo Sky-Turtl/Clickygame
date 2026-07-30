@@ -313,7 +313,9 @@ input[type=date] { color-scheme: dark; }
 .box-dashboard { display: block; }
 .dash-box { position: relative; }
 .dash-box-handle,
-.dash-box-resize { display: none; }
+.dash-box-resize,
+.dash-reset,
+.dash-col-split { display: none; }
 
 @media (min-width: 900px) {
   body.screen-hub #app,
@@ -325,17 +327,31 @@ input[type=date] { color-scheme: dark; }
      Dragging a box onto a column stacks it there (pushing the rest of that
      column down); dragging past the outer edge of the leftmost/rightmost
      column adds a new one (max 3); dragging below the columns — or resizing
-     a box far enough to the right — makes it full-width instead. See
+     a box far enough to the right — makes it full-width instead. A
+     .dash-col-split between columns drags to resize them horizontally. See
      initDashboard() in app.js. A column left empty is removed (min 1). */
   .box-dashboard {
     display: flex;
     flex-direction: column;
     gap: 14px;
+    position: relative;
   }
+  .dash-reset {
+    display: block;
+    align-self: flex-end;
+    background: var(--bg-raise-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    color: var(--text-dim);
+    font-size: 12px;
+    padding: 5px 10px;
+    cursor: pointer;
+  }
+  .dash-reset:hover { background: var(--bg-raise); color: var(--text); }
+  .dash-col-split { display: block; }
   .dash-cols {
     display: flex;
     align-items: flex-start;
-    gap: 14px;
   }
   .dash-col {
     flex: 1 1 0;
@@ -348,6 +364,24 @@ input[type=date] { color-scheme: dark; }
     background: rgba(109, 139, 255, .07);
     border-radius: var(--radius);
   }
+  .dash-col-split {
+    flex: 0 0 14px;
+    align-self: stretch;
+    position: relative;
+    cursor: col-resize;
+  }
+  .dash-col-split::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 2px;
+    transform: translateX(-50%);
+    background: var(--line);
+    border-radius: 2px;
+  }
+  .dash-col-split:hover::after { background: var(--text-faint); }
   .box-dashboard .card,
   .box-dashboard .section-head { margin-bottom: 0; }
   .box-dashboard .section-head { margin-top: 0; }
