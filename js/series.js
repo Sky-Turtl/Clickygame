@@ -29,6 +29,8 @@ export function claimRows(claims, meId) {
       multiplier: c.multiplier || 1,
       viaDuel: !!c.viaDuel,
       game: c.viaDuel ? c.game || null : null,
+      ties: c.ties || 0,
+      mgDetail: c.viaDuel ? c.mgDetail || null : null,
     }));
 }
 
@@ -53,7 +55,10 @@ export function groupRuns(rows) {
       last.count = last.items.length;
       if (r.multiplier > 1) last.anyDoubled = true;
       if (r.viaDuel) last.anyDuel = true;
-      if (r.viaDuel && r.game && !last.duelGames.includes(r.game)) last.duelGames.push(r.game);
+      if (r.viaDuel && r.game) {
+        if (!last.duelGames.includes(r.game)) last.duelGames.push(r.game);
+        last.duelReps[r.game] = r; // most recent claim of this minigame type wins
+      }
     } else {
       out.push({
         by: r.by,
@@ -67,6 +72,7 @@ export function groupRuns(rows) {
         anyDoubled: r.multiplier > 1,
         anyDuel: !!r.viaDuel,
         duelGames: r.viaDuel && r.game ? [r.game] : [],
+        duelReps: r.viaDuel && r.game ? { [r.game]: r } : {},
       });
     }
   }
