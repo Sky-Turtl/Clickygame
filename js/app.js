@@ -1209,10 +1209,17 @@ function renderHub() {
 
 function renderGameList() {
   const host = $("game-list");
+  // Ticking fields (clock, cooldown, catch-up countdown) change every 200ms
+  // and used to be baked into the signature string below, so the whole list
+  // got torn down and rebuilt ~5x/second — killing hover state and eating
+  // clicks mid-interaction. `sig` excludes those so a rebuild only happens on
+  // an actual structural change; the ticking text is patched in place after.
+  const sigKeys = [];
   const html = roster
     .map((entry) => {
       const g = games.get(entry.code);
       if (!g || !g.meta) {
+        sigKeys.push(`${entry.code}|loading`);
         return `<div class="game-card loading">
                 <div class="gc-main"><div class="gc-name">${esc(entry.code)}</div>
                 <div class="gc-sub">loading…</div></div>
@@ -1281,6 +1288,14 @@ function renderGameList() {
         }
       }
 
+      // Only these decide whether the DOM needs to be torn down and rebuilt;
+      // seconds-precision countdown text is intentionally left out so a
+      // rebuild doesn't happen every tick (see note above renderGameList).
+      sigKeys.push([
+        g.code, over, duel, hot, synced, !!opp, mine, theirs, oppOnline,
+        status ? status.cls : "", catchUp ? `${catchUp.final}|${catchUp.forMe}|${catchUp.leftMs < 3600e3}` : "",
+      ].join("|"));
+
       return `
       <div class="game-card ${over ? "over" : ""} ${duel ? "duel" : ""}" data-code="${esc(g.code)}">
         <div class="gc-main" data-open="${esc(g.code)}">
@@ -1306,9 +1321,9 @@ function renderGameList() {
           </div>
           ${status ? `<div class="gc-status gc-status-${status.cls}">${status.text}</div>` : ""}
           <div class="gc-sub">
-            ${over ? "" : `<span class="gc-clock">${fmtDuration(onClock(g))} on the clock</span> · `}${deadline}
+            ${over ? "" : `<span class="gc-clock">${fmtDuration(onClock(g))} on the clock</span> · `}<span class="gc-deadline">${deadline}</span>
           </div>
-          ${catchUpHtml}
+          <div class="gc-catchup-wrap">${catchUpHtml}</div>
         </div>
         <button class="sync-toggle ${synced ? "on" : ""}" data-sync="${esc(g.code)}"
                 title="${synced ? "Synced — clicks land here" : "Not synced"}"
@@ -1319,9 +1334,10 @@ function renderGameList() {
       </div>`;
     })
     .join("");
+  const sig = sigKeys.join(",,");
 
-  if (host.dataset.sig !== html) {
-    host.dataset.sig = html;
+  if (host.dataset.sig !== sig) {
+    host.dataset.sig = sig;
     host.innerHTML = html;
     host.querySelectorAll("[data-sync]").forEach((b) =>
       b.addEventListener("click", (e) => {
@@ -1342,6 +1358,60 @@ function renderGameList() {
       })
     );
   }
+
+  // Patch ticking text in place every call (rebuild or not) so the countdown
+  // still updates live without recreating any nodes — that's what keeps
+  // hover/click stable while a card is under the cursor.
+  roster.forEach((entry) => {
+    const g = games.get(entry.code);
+    if (!g || !g.meta) return;
+    const card = host.querySelector(`[data-code="${CSS.escape(g.code)}"]`);
+    if (!card) return;
+    const over = isOver(g);
+
+    const clockEl = card.querySelector(".gc-clock");
+    if (clockEl) clockEl.textContent = `${fmtDuration(onClock(g))} on the clock`;
+
+    const remain = g.meta.endsAt - db.now();
+    const deadline = over
+      ? "ended"
+      : remain < 86400e3
+        ? `${Math.max(0, Math.floor(remain / 3600e3))}h left`
+        : `${Math.ceil(remain / 86400e3)}d left`;
+    const deadlineEl = card.querySelector(".gc-deadline");
+    if (deadlineEl) deadlineEl.textContent = deadline;
+
+    const statusEl = card.querySelector(".gc-status");
+    if (statusEl) {
+      const cdLeft = cooldownLeft(g);
+      if (!over && cdLeft > 0) statusEl.textContent = `Ready in ${(cdLeft / 1000).toFixed(1)}s`;
+    }
+
+    const catchUp = over ? null : catchUpWindow(g);
+    const catchUpWrap = card.querySelector(".gc-catchup-wrap");
+    if (catchUp && catchUpWrap) {
+      const opp = opponentOf(g);
+      let catchUpHtml = "";
+      if (catchUp.final) {
+        catchUpHtml = catchUp.forMe
+          ? `<div class="gc-catchup lost">You can no longer catch up.</div>`
+          : `<div class="gc-catchup safe">${esc(opp?.name || "They")} can no longer catch up.</div>`;
+      } else if (catchUp.forMe) {
+        const urgent = catchUp.leftMs < 3600e3;
+        catchUpHtml = `<div class="gc-catchup ${urgent ? "urgent" : ""}">
+          ${fmtDuration(catchUp.leftMs / 1000)} left to catch up before it's unwinnable</div>`;
+      } else {
+        catchUpHtml = `<div class="gc-catchup safe">
+          ${esc(opp?.name || "They")} have ${fmtDuration(catchUp.leftMs / 1000)} left to catch up</div>`;
+      }
+      if (!catchUp.final) {
+        catchUpHtml += catchUp.forMe
+          ? `<div class="gc-clinch">${esc(opp?.name || "They")} win outright with ${fmtDuration(catchUp.theyNeed)} more</div>`
+          : `<div class="gc-clinch">You win outright with ${fmtDuration(catchUp.youNeed)} more</div>`;
+      }
+      catchUpWrap.innerHTML = catchUpHtml;
+    }
+  });
 }
 
 // --- Rejoin list (setup screen) ---------------------------------------------
