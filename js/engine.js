@@ -45,9 +45,16 @@ function pickGame(duelId) {
   return DUEL_GAMES[Math.floor(seededFloat(`${duelId}|game`) * DUEL_GAMES.length)];
 }
 
-/** Random 1.2-3.8s delay before a reaction round's "go" moment. */
+/**
+ * Random delay before a reaction round's "go" moment. Shaped as an Erlang(2)
+ * draw on top of a 1.2s floor: rises then decays, so most delays land around
+ * 2-3s while a long tail keeps rarer, longer waits possible (rather than a
+ * flat cutoff that never goes past a fixed max).
+ */
 function reactionDelay(duelId, round) {
-  return 1200 + Math.floor(seededFloat(`${duelId}|${round}|delay`) * 2600);
+  const u1 = seededFloat(`${duelId}|${round}|delay1`);
+  const u2 = seededFloat(`${duelId}|${round}|delay2`);
+  return 1200 + Math.round(-750 * Math.log(u1 * u2));
 }
 
 /**
@@ -154,9 +161,8 @@ export function applyClaim(state, ctx) {
       createdAt: ctx.at,
       picks: null,
     };
-    // Reaction's goAt isn't set here: a player already mid-duel elsewhere
-    // shouldn't have a reaction clock silently running against them, so it
-    // waits on both sides reporting clear — see applyReactionClear/
+    // Reaction's goAt isn't set here: the clock shouldn't start until both
+    // players have actually clicked "I'm ready" — see applyReactionClear/
     // applyStartReaction, driven by store.checkReactionStart.
     if (game === "reaction") duel.reactionClear = {};
     // Tracks the start of the *current* round for timeout purposes — reset on
@@ -402,10 +408,9 @@ export function applyDuelTimeout(state, ctx) {
 }
 
 /**
- * A player reports whether *they personally* are free to start a reaction
- * round — i.e. they have no other open duel elsewhere. Only that player's own
- * client can know this (it's derived from their own game list), so this is
- * self-reported, one flag per player, rather than computed here.
+ * A player clicked "I'm ready" for a reaction round. One flag per player,
+ * self-reported since only that player's own client can know they've hit the
+ * button.
  *
  * @param duel current duel node
  * @param ctx  { duelId, playerId, clear }

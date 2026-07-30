@@ -713,13 +713,19 @@ function renderMinigameRecord(list) {
     );
   }
 
-  renderMinigameBreakdown(list, gameFilter, minigameSel);
+  renderMinigameBreakdown(list, gameFilter);
 }
 
-/** All-time win/loss per minigame type, each tagged in its own color — click a row to filter the period table above by it. */
-function renderMinigameBreakdown(list, gameFilter, minigameSel) {
-  const byGame = {};
-  for (const key of Object.keys(DUEL_META)) byGame[key] = { wins: 0, losses: 0 };
+/**
+ * All-time record broken out per minigame type (rather than one combined
+ * total), so a lopsided coin-flip record doesn't hide behind a good overall
+ * win rate. Always all-time and independent of the minigame-type filter above
+ * — that filter narrows the period table to one type, this shows all of them
+ * side by side.
+ */
+function renderMinigameBreakdown(list, gameFilter) {
+  const byType = {}; // minigame key -> { wins, losses, ties }
+  for (const key of Object.keys(DUEL_META)) byType[key] = { wins: 0, losses: 0, ties: 0 };
 
   for (const g of list) {
     if (gameFilter !== "__all__" && g.code !== gameFilter) continue;
@@ -727,37 +733,29 @@ function renderMinigameBreakdown(list, gameFilter, minigameSel) {
     const opp = opponentOf(g);
     if (!opp) continue;
     for (const c of g.claims || []) {
-      if (!c.viaDuel || c.status !== "settled" || !c.game || !byGame[c.game]) continue;
+      if (!c.viaDuel || c.status !== "settled" || !c.game || !byType[c.game]) continue;
       const won = c.by === meId;
       if (!won && c.by !== opp.id) continue;
-      if (won) byGame[c.game].wins++;
-      else byGame[c.game].losses++;
+      if (won) byType[c.game].wins++;
+      else byType[c.game].losses++;
+      byType[c.game].ties += c.ties || 0;
     }
   }
 
-  const html = Object.entries(DUEL_META)
-    .map(([key, meta]) => {
-      const { wins, losses } = byGame[key];
-      const total = wins + losses;
-      const pct = total ? `${Math.round((wins / total) * 100)}%` : "—";
-      return `<button type="button" class="minigame-row" data-minigame="${key}"
-          style="--mg-color:${meta.color}">
-        <span class="mg-tag">${meta.icon} ${esc(meta.label)}</span>
-        <span class="mg-rec">${wins}W – ${losses}L</span>
-        <span class="mg-pct">${pct}</span>
-      </button>`;
-    })
-    .join("");
-
-  $("profile-minigame-breakdown").innerHTML = html;
-  $("profile-minigame-breakdown")
-    .querySelectorAll("[data-minigame]")
-    .forEach((el) =>
-      el.addEventListener("click", () => {
-        minigameSel.value = el.dataset.minigame;
-        renderProfile();
+  const head = `<thead><tr><th>Minigame</th><th>Wins</th><th>Losses</th><th>Ties</th><th>Win%</th></tr></thead>`;
+  const body =
+    `<tbody>` +
+    Object.entries(DUEL_META)
+      .map(([key, meta]) => {
+        const { wins, losses, ties } = byType[key];
+        const total = wins + losses;
+        const pct = total ? `${Math.round((wins / total) * 100)}%` : "—";
+        return `<tr><td style="color:${meta.color}">${meta.icon} ${esc(meta.label)}</td><td class="num">${wins}</td><td class="num">${losses}</td><td class="num">${ties}</td><td class="num">${pct}</td></tr>`;
       })
-    );
+      .join("") +
+    `</tbody>`;
+
+  setHTML("profile-minigame-breakdown", head + body);
 }
 
 // --- Derived helpers --------------------------------------------------------
@@ -864,11 +862,66 @@ function openDuelFor(g) {
   return d;
 }
 
-/** Colored "DUEL" chip for the hub card, naming which minigame is live. */
-function gcDuelFlag(duel) {
-  const meta = DUEL_META[duel.game];
-  if (!meta) return '<span class="gc-flag duel">DUEL</span>';
-  return `<span class="gc-flag duel" style="--mg-color:${meta.color}" title="${esc(meta.label)}">${meta.icon} ${esc(meta.label)}</span>`;
+/**
+ * Duel history for a single (1v1) game: overall record against this
+ * opponent, the individual settled duels (most recent first), and how many
+ * of the most recent claims in a row were contested — a "hot streak" of
+ * disputes rather than clean claims.
+ */
+function duelStatsFor(g) {
+  const meId = myId(g);
+  const opp = opponentOf(g);
+  const claims = g.claims || [];
+
+  const settled = claims.filter((c) => c.status === "settled");
+  let streak = 0;
+  for (let i = settled.length - 1; i >= 0; i--) {
+    if (!settled[i].viaDuel) break;
+    streak++;
+  }
+
+  const history = [];
+  let wins = 0, losses = 0, ties = 0;
+  for (const c of claims) {
+    if (!c.viaDuel || c.status !== "settled") continue;
+    const won = c.by === meId;
+    if (!won && opp && c.by !== opp.id) continue; // shouldn't happen in a 1v1
+    if (won) wins++; else losses++;
+    ties += c.ties || 0;
+    history.push({ at: c.at, game: c.game || null, won, ties: c.ties || 0 });
+  }
+  history.sort((a, b) => b.at - a.at);
+
+  return { wins, losses, ties, streak, history };
+}
+
+/** The game-card badge for a currently-open duel: which minigame, hoverable for the matchup's history. */
+function duelBadgeFor(g, duel) {
+  const meta = DUEL_META[duel.game] || DUEL_META.rps;
+  const opp = opponentOf(g);
+  const stats = duelStatsFor(g);
+
+  const rows = stats.history
+    .slice(0, 8)
+    .map((h) => {
+      const hMeta = h.game ? DUEL_META[h.game] : null;
+      const label = hMeta ? `${hMeta.icon} ${hMeta.label}` : "Unknown minigame";
+      const tieNote = h.ties ? ` · ${h.ties} tie${h.ties === 1 ? "" : "s"} first` : "";
+      return `<li class="${h.won ? "win" : "loss"}">${h.won ? "You won" : `${esc(opp?.name || "They")} won`} — ${esc(label)}${tieNote}</li>`;
+    })
+    .join("");
+
+  return `
+    <span class="gc-flag duel gc-duel-badge" style="--mg-color:${meta.color}" tabindex="0">
+      ${meta.icon} ${esc(meta.label)}
+      <div class="gc-duel-tip">
+        <div class="gc-duel-tip-record">
+          <span class="win">${stats.wins}W</span> · <span class="loss">${stats.losses}L</span> · <span class="tie">${stats.ties} tie${stats.ties === 1 ? "" : "s"}</span>
+        </div>
+        ${stats.streak > 1 ? `<div class="gc-duel-tip-streak">⚔ ${stats.streak} contested claims in a row</div>` : ""}
+        ${rows ? `<ul class="gc-duel-tip-list">${rows}</ul>` : `<p class="gc-duel-tip-empty">No past duels yet — this is the first.</p>`}
+      </div>
+    </span>`;
 }
 
 /** Duels I'm in that need an action from me — these block the claim button. */
@@ -1107,46 +1160,17 @@ function tick() {
   for (const g of games.values()) {
     checkWindows(g);
     checkDuelExpiry(g);
-    checkReactionGate(g);
   }
   render();
 }
 
-/** code -> id of the last "am I clear to start reaction" value this client reported for a duel. */
-const reactionClearReported = new Map();
-
 /**
- * A reaction duel waits on both sides reporting they've got no other open
- * duel elsewhere before its goAt is set (see engine.applyStartReaction). Each
- * client can only speak for its own player, and only this device knows what
- * other games its own player is in — so it self-reports here.
+ * A player clicked "I'm ready" on a reaction duel. Reports their side clear
+ * and, if that makes both sides clear, starts the round's clock (see
+ * engine.applyReactionClear/applyStartReaction, driven by db.checkReactionStart).
  */
-function checkReactionGate(g) {
-  const d = g.state?.duel;
-  if (!d || d.status !== "open" || d.game !== "reaction") return;
-  if (d.goAt) {
-    reactionClearReported.delete(d.id); // started — no longer relevant, keep the map from growing
-    return;
-  }
-  const meId = myId(g);
-  if (d.challenger !== meId && d.defender !== meId) return;
-
-  const iAmClear = !hasOtherOpenDuel(g.code, d.id);
-  if (reactionClearReported.get(d.id) === iAmClear) return;
-  reactionClearReported.set(d.id, iAmClear);
-  db.checkReactionStart(g.code, d.id, meId, iAmClear);
-}
-
-/** Is this device's own player still tied up in some other unsettled duel? */
-function hasOtherOpenDuel(excludeCode, excludeDuelId) {
-  for (const g2 of games.values()) {
-    const d2 = g2.state?.duel;
-    if (!d2 || d2.id === excludeDuelId) continue;
-    if (!duelUnsettled(d2)) continue;
-    const pid2 = myId(g2);
-    if (d2.challenger === pid2 || d2.defender === pid2) return true;
-  }
-  return false;
+async function markReactionReady(code, duelId, playerId) {
+  await db.checkReactionStart(code, duelId, playerId, true);
 }
 
 /**
@@ -1160,7 +1184,10 @@ function checkDuelExpiry(g) {
   if (!d) return;
   if (d.status !== "open" && d.status !== "double_offer") return;
 
-  const startedAt = d.status === "double_offer" ? d.decidedAt : d.roundStartAt || d.createdAt;
+  const startedAt = Math.max(
+    (d.status === "double_offer" ? d.decidedAt : d.roundStartAt || d.createdAt) || 0,
+    d.lastActivityAt || 0
+  );
   if (db.now() - startedAt < DUEL_TIMEOUT_MS) return;
 
   db.checkDuelTimeout(g.code, d.id);
@@ -1262,10 +1289,17 @@ function renderHub() {
 
 function renderGameList() {
   const host = $("game-list");
+  // Ticking fields (clock, cooldown, catch-up countdown) change every 200ms
+  // and used to be baked into the signature string below, so the whole list
+  // got torn down and rebuilt ~5x/second — killing hover state and eating
+  // clicks mid-interaction. `sig` excludes those so a rebuild only happens on
+  // an actual structural change; the ticking text is patched in place after.
+  const sigKeys = [];
   const html = roster
     .map((entry) => {
       const g = games.get(entry.code);
       if (!g || !g.meta) {
+        sigKeys.push(`${entry.code}|loading`);
         return `<div class="game-card loading">
                 <div class="gc-main"><div class="gc-name">${esc(entry.code)}</div>
                 <div class="gc-sub">loading…</div></div>
@@ -1334,13 +1368,23 @@ function renderGameList() {
         }
       }
 
+      // Only these decide whether the DOM needs to be torn down and rebuilt;
+      // seconds-precision countdown text is intentionally left out so a
+      // rebuild doesn't happen every tick (see note above renderGameList).
+      sigKeys.push([
+        g.code, over, duel, hot, synced, !!opp, mine, theirs, oppOnline,
+        status ? status.cls : "", catchUp ? `${catchUp.final}|${catchUp.forMe}|${catchUp.leftMs < 3600e3}` : "",
+      ].join("|"));
+
+      const duelBadgeHtml = duel ? duelBadgeFor(g, duel) : "";
+
       return `
       <div class="game-card ${over ? "over" : ""} ${duel ? "duel" : ""}" data-code="${esc(g.code)}">
         <div class="gc-main" data-open="${esc(g.code)}">
           <div class="gc-head">
             <span class="gc-name">${esc(gameLabel(g))}</span>
             ${hot ? '<span class="gc-flag hot">2x</span>' : ""}
-            ${duel ? gcDuelFlag(duel) : ""}
+            ${duelBadgeHtml}
             ${over ? '<span class="gc-flag over">ENDED</span>' : ""}
           </div>
           <div class="gc-bar">
@@ -1359,9 +1403,9 @@ function renderGameList() {
           </div>
           ${status ? `<div class="gc-status gc-status-${status.cls}">${status.text}</div>` : ""}
           <div class="gc-sub">
-            ${over ? "" : `<span class="gc-clock">${fmtDuration(onClock(g))} on the clock</span> · `}${deadline}
+            ${over ? "" : `<span class="gc-clock">${fmtDuration(onClock(g))} on the clock</span> · `}<span class="gc-deadline">${deadline}</span>
           </div>
-          ${catchUpHtml}
+          <div class="gc-catchup-wrap">${catchUpHtml}</div>
         </div>
         <button class="sync-toggle ${synced ? "on" : ""}" data-sync="${esc(g.code)}"
                 title="${synced ? "Synced — clicks land here" : "Not synced"}"
@@ -1372,9 +1416,10 @@ function renderGameList() {
       </div>`;
     })
     .join("");
+  const sig = sigKeys.join(",,");
 
-  if (host.dataset.sig !== html) {
-    host.dataset.sig = html;
+  if (host.dataset.sig !== sig) {
+    host.dataset.sig = sig;
     host.innerHTML = html;
     host.querySelectorAll("[data-sync]").forEach((b) =>
       b.addEventListener("click", (e) => {
@@ -1395,6 +1440,60 @@ function renderGameList() {
       })
     );
   }
+
+  // Patch ticking text in place every call (rebuild or not) so the countdown
+  // still updates live without recreating any nodes — that's what keeps
+  // hover/click stable while a card is under the cursor.
+  roster.forEach((entry) => {
+    const g = games.get(entry.code);
+    if (!g || !g.meta) return;
+    const card = host.querySelector(`[data-code="${CSS.escape(g.code)}"]`);
+    if (!card) return;
+    const over = isOver(g);
+
+    const clockEl = card.querySelector(".gc-clock");
+    if (clockEl) clockEl.textContent = `${fmtDuration(onClock(g))} on the clock`;
+
+    const remain = g.meta.endsAt - db.now();
+    const deadline = over
+      ? "ended"
+      : remain < 86400e3
+        ? `${Math.max(0, Math.floor(remain / 3600e3))}h left`
+        : `${Math.ceil(remain / 86400e3)}d left`;
+    const deadlineEl = card.querySelector(".gc-deadline");
+    if (deadlineEl) deadlineEl.textContent = deadline;
+
+    const statusEl = card.querySelector(".gc-status");
+    if (statusEl) {
+      const cdLeft = cooldownLeft(g);
+      if (!over && cdLeft > 0) statusEl.textContent = `Ready in ${(cdLeft / 1000).toFixed(1)}s`;
+    }
+
+    const catchUp = over ? null : catchUpWindow(g);
+    const catchUpWrap = card.querySelector(".gc-catchup-wrap");
+    if (catchUp && catchUpWrap) {
+      const opp = opponentOf(g);
+      let catchUpHtml = "";
+      if (catchUp.final) {
+        catchUpHtml = catchUp.forMe
+          ? `<div class="gc-catchup lost">You can no longer catch up.</div>`
+          : `<div class="gc-catchup safe">${esc(opp?.name || "They")} can no longer catch up.</div>`;
+      } else if (catchUp.forMe) {
+        const urgent = catchUp.leftMs < 3600e3;
+        catchUpHtml = `<div class="gc-catchup ${urgent ? "urgent" : ""}">
+          ${fmtDuration(catchUp.leftMs / 1000)} left to catch up before it's unwinnable</div>`;
+      } else {
+        catchUpHtml = `<div class="gc-catchup safe">
+          ${esc(opp?.name || "They")} have ${fmtDuration(catchUp.leftMs / 1000)} left to catch up</div>`;
+      }
+      if (!catchUp.final) {
+        catchUpHtml += catchUp.forMe
+          ? `<div class="gc-clinch">${esc(opp?.name || "They")} win outright with ${fmtDuration(catchUp.theyNeed)} more</div>`
+          : `<div class="gc-clinch">You win outright with ${fmtDuration(catchUp.youNeed)} more</div>`;
+      }
+      catchUpWrap.innerHTML = catchUpHtml;
+    }
+  });
 }
 
 // --- Rejoin list (setup screen) ---------------------------------------------
@@ -2118,81 +2217,15 @@ function pingDuelActivity(code, duelId) {
   db.pingDuelActivity(code, duelId);
 }
 
-/**
- * All active duels share one overlay so multiple at once don't stack
- * full-screen on top of each other — a scroll-snapping track of cards, side
- * by side on wide screens, swipe/arrow-through on narrow ones.
- */
-function duelOverlay() {
-  let overlay = $("duel-overlay");
-  if (overlay) return overlay;
-
-  const host = $("rps-host");
-  overlay = document.createElement("div");
-  overlay.id = "duel-overlay";
-  overlay.className = "modal-backdrop duel-overlay hidden";
-  overlay.innerHTML = `
-    <div class="duel-carousel">
-      <button type="button" class="duel-nav prev hidden" aria-label="Previous duel">‹</button>
-      <div class="duel-track" data-el="track"></div>
-      <button type="button" class="duel-nav next hidden" aria-label="Next duel">›</button>
-    </div>
-    <p class="duel-counter hidden" data-el="counter"></p>`;
-  host.appendChild(overlay);
-
-  const track = overlay.querySelector('[data-el="track"]');
-  overlay.querySelector(".prev").addEventListener("click", () => scrollDuelTrack(track, -1));
-  overlay.querySelector(".next").addEventListener("click", () => scrollDuelTrack(track, 1));
-  track.addEventListener("scroll", () => updateDuelCounter(overlay), { passive: true });
-  return overlay;
-}
-
-function scrollDuelTrack(track, dir) {
-  const width = track.firstElementChild ? track.firstElementChild.getBoundingClientRect().width + 14 : track.clientWidth;
-  track.scrollBy({ left: dir * width, behavior: "smooth" });
-}
-
-function updateDuelCounter(overlay) {
-  const track = overlay.querySelector('[data-el="track"]');
-  const counterEl = overlay.querySelector('[data-el="counter"]');
-  const navEls = overlay.querySelectorAll(".duel-nav");
-  const cards = [...track.children];
-
-  navEls.forEach((btn) => btn.classList.toggle("hidden", cards.length <= 1));
-  if (cards.length <= 1) {
-    counterEl.classList.add("hidden");
-    return;
-  }
-
-  const trackMid = track.getBoundingClientRect().left + track.clientWidth / 2;
-  let idx = 0;
-  let best = Infinity;
-  cards.forEach((c, i) => {
-    const r = c.getBoundingClientRect();
-    const dist = Math.abs(r.left + r.width / 2 - trackMid);
-    if (dist < best) {
-      best = dist;
-      idx = i;
-    }
-  });
-  counterEl.classList.remove("hidden");
-  counterEl.textContent = `Duel ${idx + 1} of ${cards.length}`;
-}
-
 function renderDuelModal() {
-  const overlay = duelOverlay();
-  const track = overlay.querySelector('[data-el="track"]');
+  const host = $("rps-host");
   const entries = allActiveDuels();
 
-  overlay.classList.toggle("hidden", entries.length === 0);
-
-  // Remove cards for duels that are no longer active.
+  // Remove modals for duels that are no longer active.
   const activeKeys = new Set(entries.map((e) => `duel-${e.g.code}-${e.duel.id}`));
-  for (const el of [...track.children]) {
+  for (const el of [...host.children]) {
     if (!activeKeys.has(el.id)) el.remove();
   }
-
-  const newlyOpened = [];
 
   for (const entry of entries) {
     const { g, duel: d } = entry;
@@ -2206,27 +2239,26 @@ function renderDuelModal() {
     let card = $(key);
     if (!card) {
       card = document.createElement("div");
-      card.className = "modal duel-card";
+      card.className = "modal-backdrop";
       card.id = key;
-      card.setAttribute("role", "dialog");
-      card.setAttribute("aria-modal", "true");
       card.innerHTML = `
-        <h2>⚔️ Contested claim</h2>
-        <p class="duel-game" data-el="game"></p>
-        <p class="duel-minigame" data-el="minigame"></p>
-        <p class="modal-sub" data-el="sub"></p>
-        <div class="pot" data-el="pot"></div>
-        <div class="duel-picker" data-el="picker"></div>
-        <p class="modal-status" data-el="status"></p>
-        <p class="modal-timeout hidden" data-el="countdown"></p>
-        <div class="rps-result hidden" data-el="result"></div>
-        <div class="modal-actions">
-          <div class="spacer"></div>
-          <button type="button" class="btn btn-ghost hidden" data-el="dismiss">Close</button>
-        </div>
-        <p class="modal-lock" data-el="lock">You can't claim again until you've made your move.</p>`;
-      track.appendChild(card);
-      newlyOpened.push(card);
+        <div class="modal" role="dialog" aria-modal="true">
+          <h2>⚔️ Contested claim</h2>
+          <p class="duel-game" data-el="game"></p>
+          <p class="duel-minigame" data-el="minigame"></p>
+          <p class="modal-sub" data-el="sub"></p>
+          <div class="pot" data-el="pot"></div>
+          <div class="duel-picker" data-el="picker"></div>
+          <p class="modal-status" data-el="status"></p>
+          <p class="modal-timeout hidden" data-el="countdown"></p>
+          <div class="rps-result hidden" data-el="result"></div>
+          <div class="modal-actions">
+            <div class="spacer"></div>
+            <button type="button" class="btn btn-ghost hidden" data-el="dismiss">Close</button>
+          </div>
+          <p class="modal-lock" data-el="lock">You can't claim again until you've made your move.</p>
+        </div>`;
+      host.appendChild(card);
 
       // Wire the picker once and read live duel state at click time — the
       // markup inside gets rebuilt on every render, but delegation means the
@@ -2264,6 +2296,15 @@ function renderDuelModal() {
           submitPick(val);
           return;
         }
+        const readyBtn = e.target.closest("[data-reaction-ready]");
+        if (readyBtn) {
+          const cur = games.get(g.code);
+          const curDuel = cur?.state?.duel;
+          if (!curDuel || curDuel.id !== d.id) return;
+          readyBtn.disabled = true;
+          markReactionReady(g.code, curDuel.id, myId(g)).then(render);
+          return;
+        }
         const btn = e.target.closest("[data-pick]");
         if (!btn || btn.disabled) return;
         const kind = btn.dataset.pick;
@@ -2288,7 +2329,6 @@ function renderDuelModal() {
         const curDuel = cur?.state?.duel;
         if (curDuel?.status === "resolved") dismissedResults.add(curDuel.id);
         card.remove();
-        updateDuelCounter(overlay);
         render();
       });
     }
@@ -2307,19 +2347,16 @@ function renderDuelModal() {
         `${(d.gapMs / 1000).toFixed(1)}s of each other. ${esc(meta.rule)}`;
 
     const potMultiplier = d.payoutMultiplier || 1;
-    const potLabel = resolved
-      ? d.doubled && !d.doubleLost
-        ? "Doubled!"
-        : "Settled"
-      : `In escrow${d.round > 1 ? ` · round ${d.round}` : ""}`;
-    el("pot").innerHTML = `<div class="pot-label">${potLabel}</div>
-      <div class="pot-value">${fmtDuration(d.potSeconds * potMultiplier)}</div>`;
+    const isCoin = d.game === "coin";
+    const coinFace = isCoin ? d.detail?.result : null;
 
     // Picker (also hosts the coin's double-or-nothing choice, once decided)
     const pickerEl = el("picker");
     pickerEl.classList.toggle("hidden", resolved);
     if (!resolved) {
-      const sig = `${d.status}|${d.game}|${d.round}|${iPicked}|${d.game === "reaction" ? db.now() >= d.goAt : ""}`;
+      const sig = `${d.status}|${d.game}|${d.round}|${iPicked}|${
+        d.game === "reaction" ? `${db.now() >= d.goAt}|${!!d.reactionClear?.[meId]}` : ""
+      }`;
       if (pickerEl.dataset.sig !== sig) {
         pickerEl.dataset.sig = sig;
         pickerEl.innerHTML = pickerHtml(d, iPicked, meId);
@@ -2342,14 +2379,46 @@ function renderDuelModal() {
 
     if (resolved) {
       const iWon = d.winner === meId;
-      statusEl.textContent = "";
       resultEl.classList.remove("hidden");
 
-      // Rebuild (and re-trigger the coin's flip animation) only the moment
-      // this particular resolution appears — not on every 200ms tick while
-      // the result stays on screen waiting to be dismissed.
+      // Kick off (or continue) the coin's flip animation the moment this
+      // resolution appears — not on every 200ms tick while it plays out.
       const resultSig = `${d.id}|${d.status}|${d.doubled}|${d.doubleLost}|${d.timedOut}`;
-      if (resultEl.dataset.sig !== resultSig) {
+      if (coinFace && resultEl.dataset.flipSig !== resultSig) {
+        resultEl.dataset.flipSig = resultSig;
+        if (d.doubled) {
+          // A genuine double-or-nothing gamble is a fresh flip, however far
+          // the first one got — settle it with a couple of pulses.
+          const secondFace = d.doubleLost ? (coinFace === "heads" ? "tails" : "heads") : coinFace;
+          card.dataset.coinRevealAt = String(db.now() + COIN_FLIP_MS + COIN_PULSE_MS * COIN_PULSE_COUNT);
+          playCoinFlip(resultEl, secondFace, { pulse: true });
+        } else if (!card.dataset.coinRevealAt || db.now() >= Number(card.dataset.coinRevealAt)) {
+          // No flip already in flight (e.g. this card just mounted after a
+          // reload) — play one now instead of jumping straight to settled.
+          card.dataset.coinRevealAt = String(db.now() + COIN_FLIP_MS);
+          playCoinFlip(resultEl, coinFace);
+        }
+        // Otherwise the double_offer stage's flip is still spinning toward
+        // this same face — let it run rather than restarting or cutting it off.
+      }
+
+      const stillFlipping = coinFace && card.dataset.coinRevealAt && db.now() < Number(card.dataset.coinRevealAt);
+      statusEl.textContent = "";
+
+      // While the coin is still spinning, the pot stays on the "in escrow"
+      // look — no "Doubled!"/"Settled" label — so a fast bot response can't
+      // flash past the flip.
+      const potLabel = stillFlipping
+        ? `In escrow${d.round > 1 ? ` · round ${d.round}` : ""}`
+        : d.doubled && !d.doubleLost
+          ? "Doubled!"
+          : "Settled";
+      el("pot").innerHTML = `<div class="pot-label">${potLabel}</div>
+        <div class="pot-value">${fmtDuration(d.potSeconds * potMultiplier)}</div>`;
+
+      // Hold the verdict/explanation back until the coin (if any) has fully
+      // settled, so a fast bot response can't flash straight past the flip.
+      if (!stillFlipping && resultEl.dataset.sig !== resultSig) {
         resultEl.dataset.sig = resultSig;
 
         const doubleNote = d.doubled
@@ -2379,21 +2448,12 @@ function renderDuelModal() {
           ${doubleNote}
           ${golfReplayHtml}`;
 
-        // The initial coin flip already played during the "double_offer" stage
-        // (before the winner was offered take/double). Taking it (or timing
-        // out) finishes the duel right there with no replay — only a genuine
-        // double-or-nothing gamble is a new flip that needs its own animation.
-        const initialFace = d.game === "coin" ? d.detail?.result : null;
-        if (initialFace && d.doubled) {
-          const secondFace = d.doubleLost ? (initialFace === "heads" ? "tails" : "heads") : initialFace;
-          playCoinFlip(resultEl, secondFace, restHtml);
-        } else if (initialFace) {
-          resultEl.innerHTML = `<div class="coin-flip-stage"><div class="coin-face settle ${initialFace}">${COIN_FACE[initialFace]}</div></div>
-            <div class="coin-outcome ${initialFace}">${initialFace === "heads" ? "Heads" : "Tails"}</div>
-            ${restHtml}`;
-        } else {
-          resultEl.innerHTML = restHtml;
-        }
+        const finalFace = d.doubled ? (d.doubleLost ? (coinFace === "heads" ? "tails" : "heads") : coinFace) : coinFace;
+        const coinHtml = finalFace
+          ? `<div class="coin-flip-stage"><div class="coin-face settle ${finalFace}">${COIN_FACE[finalFace]}</div></div>
+            <div class="coin-outcome ${finalFace}">${finalFace === "heads" ? "Heads" : "Tails"}</div>`
+          : "";
+        resultEl.innerHTML = `${coinHtml}${restHtml}`;
 
         if (myGolfPath || oppGolfPath) {
           const mount = resultEl.querySelector('[data-el="golf-replay"]');
@@ -2409,6 +2469,9 @@ function renderDuelModal() {
       dismissEl.classList.add("hidden");
       lockEl.classList.remove("hidden"); // still locked either way — waiting on a pick or a double-or-nothing choice
 
+      el("pot").innerHTML = `<div class="pot-label">In escrow${d.round > 1 ? ` · round ${d.round}` : ""}</div>
+        <div class="pot-value">${fmtDuration(d.potSeconds * potMultiplier)}</div>`;
+
       if (d.status === "double_offer") {
         // Play the flip once, then hold the take/double choice back until it
         // settles — the winner shouldn't see (or be able to click) the offer
@@ -2420,7 +2483,7 @@ function renderDuelModal() {
           const coinResult = d.detail?.result;
           if (coinResult) {
             card.dataset.coinRevealAt = String(db.now() + COIN_FLIP_MS);
-            playCoinFlip(resultEl, coinResult, "");
+            playCoinFlip(resultEl, coinResult);
           } else {
             resultEl.innerHTML = "";
             delete card.dataset.coinRevealAt;
@@ -2450,11 +2513,6 @@ function renderDuelModal() {
       countdownEl.textContent =
         remaining > 0 ? `Auto-resolves in ${fmtCountdown(remaining)} if unanswered.` : "Resolving…";
     }
-  }
-
-  updateDuelCounter(overlay);
-  if (newlyOpened.length) {
-    newlyOpened[newlyOpened.length - 1].scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
   }
 }
 
@@ -2486,8 +2544,14 @@ function pickerHtml(d, iPicked, meId) {
     case "dice":
       return `<button type="button" class="btn btn-primary duel-tap" data-pick="roll">🎲 Roll the die</button>`;
     case "reaction": {
-      const ready = db.now() >= d.goAt;
-      return ready
+      if (!d.goAt) {
+        const iAmReady = !!d.reactionClear?.[meId];
+        return iAmReady
+          ? `<div class="duel-locked">Ready. Waiting for the other side…</div>`
+          : `<button type="button" class="btn btn-primary duel-tap" data-reaction-ready>I'm ready</button>`;
+      }
+      const go = db.now() >= d.goAt;
+      return go
         ? `<button type="button" class="btn btn-primary duel-tap go" data-pick="tap">TAP NOW!</button>`
         : `<button type="button" class="btn btn-ghost duel-tap wait" data-pick="tap">Wait for it…</button>`;
     }
@@ -2503,16 +2567,20 @@ function pickerHtml(d, iPicked, meId) {
 
 const COIN_FLIP_MS = 1000;
 const COIN_FLIP_TICK_MS = 110;
+const COIN_PULSE_MS = 350;
+const COIN_PULSE_COUNT = 2;
 let coinFlipSeq = 0;
 const COIN_FACE = { heads: "👑", tails: "⭐" };
 
 /**
  * Animate a coin flip into `el`: alternates the shown face between heads and
- * tails for COIN_FLIP_MS, then settles on `finalResult` and appends
- * `trailingHtml`. The outcome is already decided server-side — this is purely
- * a client-side reveal delay for suspense.
+ * tails for COIN_FLIP_MS, then settles on `finalResult`. The outcome is
+ * already decided server-side — this is purely a client-side reveal delay
+ * for suspense. With `pulse: true` (the double-or-nothing re-flip), the
+ * final face grows/shrinks a couple of times before settling, instead of
+ * settling immediately.
  */
-function playCoinFlip(el, finalResult, trailingHtml) {
+function playCoinFlip(el, finalResult, { pulse = false } = {}) {
   const token = String(++coinFlipSeq);
   el.dataset.flipToken = token;
 
@@ -2532,12 +2600,19 @@ function playCoinFlip(el, finalResult, trailingHtml) {
     outcomeEl.className = `coin-outcome flipping ${face}`;
   }, COIN_FLIP_TICK_MS);
 
+  const outcomeLabel = finalResult === "heads" ? "Heads" : "Tails";
   setTimeout(() => {
     clearInterval(interval);
     if (el.dataset.flipToken !== token) return;
-    el.innerHTML = `<div class="coin-flip-stage"><div class="coin-face settle ${finalResult}">${COIN_FACE[finalResult]}</div></div>
-      <div class="coin-outcome ${finalResult}">${finalResult === "heads" ? "Heads" : "Tails"}</div>
-      ${trailingHtml}`;
+    el.innerHTML = `<div class="coin-flip-stage"><div class="coin-face ${pulse ? "pulse" : "settle"} ${finalResult}">${COIN_FACE[finalResult]}</div></div>
+      <div class="coin-outcome ${finalResult}">${outcomeLabel}</div>`;
+    if (pulse) {
+      setTimeout(() => {
+        if (el.dataset.flipToken !== token) return;
+        const face = el.querySelector(".coin-face");
+        if (face) face.className = `coin-face settle ${finalResult}`;
+      }, COIN_PULSE_MS * COIN_PULSE_COUNT);
+    }
   }, COIN_FLIP_MS);
 }
 

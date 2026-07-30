@@ -445,6 +445,7 @@ async function creditDuelWin(code, duel, settleClaimId, at) {
       status: "settled",
       viaDuel: duel.id,
       game: duel.game || null, // which minigame decided it, for the profile's minigame record
+      ties: (duel.round || 1) - 1, // redraws before it was decided (round starts at 1)
     },
   });
 }
@@ -509,12 +510,8 @@ export async function submitDoubleChoice(code, duelId, playerId, choice) {
 }
 
 /**
- * A player's client reports whether *they* are currently free to start a
- * reaction round (no other open duel of theirs elsewhere), then — if that
- * makes both sides clear — starts the round's clock. Only the reporting
- * player's own client can know its half of this, since it's derived from
- * games only that browser has loaded; the other half was already reported
- * (or not) by the opponent's own client the same way.
+ * A player clicked "I'm ready" on a reaction duel. Reports their side clear,
+ * then — if that makes both sides clear — starts the round's clock.
  *
  * @returns the committed duel (whether or not it actually started), or null.
  */
