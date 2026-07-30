@@ -308,6 +308,52 @@ code { font-family: var(--mono); font-size: .92em; background: rgba(255,255,255,
 
 input[type=date] { color-scheme: dark; }
 
+/* ---------- Profile dashboard ---------- */
+
+.profile-dashboard { display: block; }
+.dash-box { position: relative; }
+.dash-box-handle { display: none; }
+
+@media (min-width: 900px) {
+  body.profile-active #app { max-width: 1040px; }
+
+  .profile-dashboard {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: 14px;
+  }
+  .profile-dashboard .card,
+  .profile-dashboard .section-head { margin-bottom: 0; }
+  .profile-dashboard .section-head { margin-top: 0; }
+
+  .dash-box {
+    background: var(--bg-raise-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 10px 12px 12px;
+  }
+  .dash-box .card { background: transparent; border: none; padding: 8px 0 0; }
+  .dash-box .section-head { padding: 0 2px; }
+
+  .dash-box-handle {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 18px;
+    color: var(--text-faint);
+    font-size: 14px;
+    line-height: 1;
+    cursor: grab;
+    border-radius: 6px;
+    user-select: none;
+  }
+  .dash-box-handle:hover { background: var(--bg-raise); color: var(--text-dim); }
+  .dash-box.dragging { opacity: .45; }
+  .dash-box.drag-over { outline: 2px dashed var(--accent); outline-offset: 2px; }
+}
+
 /* ---------- Section head ---------- */
 
 .section-head {

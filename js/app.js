@@ -163,9 +163,79 @@ function showScreen(which) {
   for (const s of ["setup", "hub", "detail", "profile"]) {
     $("screen-" + s).classList.toggle("hidden", s !== which);
   }
+  document.body.classList.toggle("profile-active", which === "profile");
   window.scrollTo(0, 0);
   if (which === "setup") renderRejoin();
-  if (which === "profile") renderProfile();
+  if (which === "profile") { renderProfile(); initProfileDashboard(); }
+}
+
+// --- Profile dashboard (desktop drag-to-rearrange) --------------------------
+
+const PROFILE_ORDER_KEY = "clicky-profile-dashboard-order";
+let profileDashboardInited = false;
+
+function saveProfileDashboardOrder(dash) {
+  const order = [...dash.children].map((box) => box.dataset.box);
+  try { localStorage.setItem(PROFILE_ORDER_KEY, JSON.stringify(order)); } catch {}
+}
+
+function applyProfileDashboardOrder(dash) {
+  let saved;
+  try { saved = JSON.parse(localStorage.getItem(PROFILE_ORDER_KEY) || "null"); } catch { saved = null; }
+  if (!Array.isArray(saved)) return;
+  const boxes = new Map([...dash.children].map((box) => [box.dataset.box, box]));
+  for (const key of saved) {
+    const box = boxes.get(key);
+    if (box) dash.appendChild(box);
+  }
+}
+
+/** Wires up drag-to-rearrange for the profile dashboard boxes (desktop only; a no-op on repeat calls). */
+function initProfileDashboard() {
+  const dash = $("profile-dashboard");
+  if (!dash) return;
+  applyProfileDashboardOrder(dash);
+  if (profileDashboardInited) return;
+  profileDashboardInited = true;
+
+  let dragging = null;
+
+  for (const box of dash.querySelectorAll(".dash-box")) {
+    const handle = box.querySelector(".dash-box-handle");
+    if (!handle) continue;
+
+    handle.addEventListener("mousedown", () => { box.draggable = true; });
+    handle.addEventListener("mouseup", () => { box.draggable = false; });
+
+    box.addEventListener("dragstart", (e) => {
+      dragging = box;
+      box.classList.add("dragging");
+      e.dataTransfer.effectAllowed = "move";
+    });
+    box.addEventListener("dragend", () => {
+      box.draggable = false;
+      box.classList.remove("dragging");
+      for (const b of dash.querySelectorAll(".dash-box")) b.classList.remove("drag-over");
+      dragging = null;
+      saveProfileDashboardOrder(dash);
+    });
+    box.addEventListener("dragover", (e) => {
+      if (!dragging || dragging === box) return;
+      e.preventDefault();
+      box.classList.add("drag-over");
+    });
+    box.addEventListener("dragleave", () => box.classList.remove("drag-over"));
+    box.addEventListener("drop", (e) => {
+      e.preventDefault();
+      box.classList.remove("drag-over");
+      if (!dragging || dragging === box) return;
+      const boxes = [...dash.children];
+      const from = boxes.indexOf(dragging);
+      const to = boxes.indexOf(box);
+      if (from < to) dash.insertBefore(dragging, box.nextSibling);
+      else dash.insertBefore(dragging, box);
+    });
+  }
 }
 
 /** The main screen: the hub once you're in a game, otherwise setup. */

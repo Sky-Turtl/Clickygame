@@ -360,42 +360,56 @@
       </div>
     </header>
 
-    <div class="card">
-      <p class="card-sub">Logged in as <strong id="profile-username"></strong>.</p>
-      <div class="stat-grid" id="profile-record"></div>
-    </div>
+    <div class="profile-dashboard" id="profile-dashboard">
+      <div class="dash-box" data-box="record">
+        <div class="dash-box-handle" title="Drag to rearrange">⠿</div>
+        <div class="card">
+          <p class="card-sub">Logged in as <strong id="profile-username"></strong>.</p>
+          <div class="stat-grid" id="profile-record"></div>
+        </div>
+      </div>
 
-    <div class="section-head">
-      <h2>Minigame record</h2>
-      <div class="filter-row">
-        <select id="profile-minigame-filter" class="scope-select" aria-label="Filter minigame record by minigame type">
-          <option value="__all__">All minigames</option>
-        </select>
-        <select id="profile-game-filter" class="scope-select" aria-label="Filter minigame record by which Clicky game">
-          <option value="__all__">All games</option>
-        </select>
+      <div class="dash-box" data-box="minigame-table">
+        <div class="dash-box-handle" title="Drag to rearrange">⠿</div>
+        <div class="section-head">
+          <h2>Minigame record</h2>
+          <div class="filter-row">
+            <select id="profile-minigame-filter" class="scope-select" aria-label="Filter minigame record by minigame type">
+              <option value="__all__">All minigames</option>
+            </select>
+            <select id="profile-game-filter" class="scope-select" aria-label="Filter minigame record by which Clicky game">
+              <option value="__all__">All games</option>
+            </select>
+          </div>
+        </div>
+        <div class="card">
+          <p class="card-sub">Wins and losses in contested-claim duels, broken down by how recent.</p>
+          <div class="table-scroll">
+            <table class="summary-table" id="profile-minigame-table"></table>
+          </div>
+          <p class="card-sub hidden" id="profile-minigame-unknown-note"></p>
+        </div>
+      </div>
+
+      <div class="dash-box" data-box="breakdown">
+        <div class="dash-box-handle" title="Drag to rearrange">⠿</div>
+        <div class="section-head">
+          <h2>By minigame</h2>
+        </div>
+        <div class="card">
+          <p class="card-sub">All-time record broken out by which minigame decided the duel (respects the game filter above). Tap a row for the deeper numbers.</p>
+          <ul class="mg-breakdown" id="profile-minigame-breakdown"></ul>
+        </div>
+      </div>
+
+      <div class="dash-box" data-box="games">
+        <div class="dash-box-handle" title="Drag to rearrange">⠿</div>
+        <div class="section-head">
+          <h2>Games</h2>
+        </div>
+        <div id="profile-games" class="game-list"></div>
       </div>
     </div>
-    <div class="card">
-      <p class="card-sub">Wins and losses in contested-claim duels, broken down by how recent.</p>
-      <div class="table-scroll">
-        <table class="summary-table" id="profile-minigame-table"></table>
-      </div>
-      <p class="card-sub hidden" id="profile-minigame-unknown-note"></p>
-    </div>
-
-    <div class="section-head">
-      <h2>By minigame</h2>
-    </div>
-    <div class="card">
-      <p class="card-sub">All-time record broken out by which minigame decided the duel (respects the game filter above). Tap a row for the deeper numbers.</p>
-      <ul class="mg-breakdown" id="profile-minigame-breakdown"></ul>
-    </div>
-
-    <div class="section-head">
-      <h2>Games</h2>
-    </div>
-    <div id="profile-games" class="game-list"></div>
 
     <div class="card">
       <button class="btn btn-ghost btn-lg" id="btn-profile-signout">Log out</button>
