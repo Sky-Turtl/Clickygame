@@ -1244,6 +1244,73 @@ function catchUpWindow(g) {
   };
 }
 
+/**
+ * Recent-activity trend: for each of the last-hour/6h/day windows, how much
+ * each side has actually claimed (not the mathematical max — the real pace).
+ * Used to say whether the current lead looks like it's holding up or not,
+ * as a softer companion to the hard unwinnable-by math in `catchUpWindow`.
+ *
+ * @returns null when there's no opponent, otherwise
+ *   { windows: [{ key, label, mine, theirs, diff }], lead, verdict }
+ *   `verdict` is a short human sentence describing the trend given `lead`.
+ */
+function paceFor(g) {
+  const opp = opponentOf(g);
+  if (!opp) return null;
+
+  const { rows } = totalsFor(g);
+  const mine = rows[myId(g)]?.all.claimed || 0;
+  const theirs = rows[opp.id]?.all.claimed || 0;
+  const lead = mine - theirs;
+
+  const windows = ["1h", "6h", "1d"].map((key) => {
+    const p = PERIODS.find((x) => x.key === key);
+    const m = rows[myId(g)]?.[key]?.claimed || 0;
+    const t = rows[opp.id]?.[key]?.claimed || 0;
+    return { key, label: p.label, ms: p.ms, mine: m, theirs: t, diff: m - t };
+  });
+
+  // Prefer the freshest window that actually has activity in it, so a quiet
+  // last hour doesn't drown out a real trend visible over the last day.
+  const primary = windows.find((w) => w.mine + w.theirs > 0) || windows[windows.length - 1];
+
+  let verdict;
+  if (lead === 0) {
+    verdict =
+      primary.diff > 0
+        ? "Tied, but you've been pulling ahead recently."
+        : primary.diff < 0
+          ? "Tied, but they've been pulling ahead recently."
+          : "Tied, and pace is even.";
+  } else if (lead > 0) {
+    verdict =
+      primary.diff > 0
+        ? "You're winning and on pace to stay ahead."
+        : primary.diff < 0
+          ? "You're winning, but they're closing the gap — watch this."
+          : "You're winning and holding steady.";
+  } else {
+    verdict =
+      primary.diff > 0
+        ? "You're losing, but you're closing the gap."
+        : primary.diff < 0
+          ? "You're losing and falling further behind."
+          : "You're losing and holding steady — not closing the gap.";
+  }
+
+  // How much more per `primary` bucket the trailing side would need to
+  // average, sustained for the rest of the game, to erase the gap exactly by
+  // the deadline. A rough guide, not the exact math `catchUpWindow` does —
+  // it spreads the deficit evenly over the remaining time rather than
+  // accounting for exactly where 2x windows fall.
+  const remainMs = Math.max(0, g.meta.endsAt - db.now());
+  const bucketLabel = { "1h": "hour", "6h": "6 hours", "1d": "day" }[primary.key];
+  const needPerBucket =
+    lead !== 0 && remainMs > 0 ? Math.abs(lead) * (primary.ms / remainMs) : null;
+
+  return { windows, lead, verdict, needPerBucket, bucketLabel, forMe: lead < 0 };
+}
+
 /** A duel that still has an undecided outcome — including a coin's double-or-nothing offer. */
 function duelUnsettled(d) {
   return !!d && (d.status === "open" || d.status === "double_offer");
@@ -1739,35 +1806,17 @@ function renderGameList() {
       }
 
       const catchUp = over ? null : catchUpWindow(g);
-      let catchUpHtml = "";
-      if (catchUp) {
-        if (catchUp.final) {
-          catchUpHtml = catchUp.forMe
-            ? `<div class="gc-catchup lost">You can no longer catch up.</div>`
-            : `<div class="gc-catchup safe">${esc(opp?.name || "They")} can no longer catch up.</div>`;
-        } else if (catchUp.forMe) {
-          const urgent = catchUp.leftMs < 3600e3;
-          catchUpHtml = `<div class="gc-catchup ${urgent ? "urgent" : ""}">
-            ${fmtDuration(catchUp.leftMs / 1000)} left to catch up before it's unwinnable</div>`;
-        } else {
-          catchUpHtml = `<div class="gc-catchup safe">
-            ${esc(opp?.name || "They")} have ${fmtDuration(catchUp.leftMs / 1000)} left to catch up</div>`;
-        }
-        if (!catchUp.final) {
-          // Only the leader has a meaningful clinch number — the trailing
-          // side is by definition not yet in a position to lock it in.
-          catchUpHtml += catchUp.forMe
-            ? `<div class="gc-clinch">${esc(opp?.name || "They")} win outright with ${fmtDuration(catchUp.theyNeed)} more</div>`
-            : `<div class="gc-clinch">You win outright with ${fmtDuration(catchUp.youNeed)} more</div>`;
-        }
-      }
+      const catchUpHtml = catchUpHtmlFor(catchUp, opp, remain);
+      const pace = over ? null : paceFor(g);
+      const paceHtml = paceHtmlFor(pace, opp);
 
       // Only these decide whether the DOM needs to be torn down and rebuilt;
       // seconds-precision countdown text is intentionally left out so a
       // rebuild doesn't happen every tick (see note above renderGameList).
       sigKeys.push([
         g.code, over, duel, hot, synced, !!opp, mine, theirs, oppOnline,
-        status ? status.cls : "", catchUp ? `${catchUp.final}|${catchUp.forMe}|${catchUp.leftMs < 3600e3}` : "",
+        status ? status.cls : "", catchUp ? `${catchUp.final}|${catchUp.forMe}` : "",
+        pace ? pace.verdict : "",
       ].join("|"));
 
       const duelBadgeHtml = duel ? duelBadgeFor(g, duel) : "";
@@ -1800,6 +1849,7 @@ function renderGameList() {
             ${over ? "" : `<span class="gc-clock">${fmtDuration(onClock(g))} on the clock</span> · `}<span class="gc-deadline">${deadline}</span>
           </div>
           <div class="gc-catchup-wrap">${catchUpHtml}</div>
+          <div class="gc-pace-wrap">${paceHtml}</div>
         </div>
         <button class="sync-toggle ${synced ? "on" : ""}" data-sync="${esc(g.code)}"
                 title="${synced ? "Synced — clicks land here" : "Not synced"}"
@@ -1867,27 +1917,64 @@ function renderGameList() {
     const catchUpWrap = card.querySelector(".gc-catchup-wrap");
     if (catchUp && catchUpWrap) {
       const opp = opponentOf(g);
-      let catchUpHtml = "";
-      if (catchUp.final) {
-        catchUpHtml = catchUp.forMe
-          ? `<div class="gc-catchup lost">You can no longer catch up.</div>`
-          : `<div class="gc-catchup safe">${esc(opp?.name || "They")} can no longer catch up.</div>`;
-      } else if (catchUp.forMe) {
-        const urgent = catchUp.leftMs < 3600e3;
-        catchUpHtml = `<div class="gc-catchup ${urgent ? "urgent" : ""}">
-          ${fmtDuration(catchUp.leftMs / 1000)} left to catch up before it's unwinnable</div>`;
-      } else {
-        catchUpHtml = `<div class="gc-catchup safe">
-          ${esc(opp?.name || "They")} have ${fmtDuration(catchUp.leftMs / 1000)} left to catch up</div>`;
-      }
-      if (!catchUp.final) {
-        catchUpHtml += catchUp.forMe
-          ? `<div class="gc-clinch">${esc(opp?.name || "They")} win outright with ${fmtDuration(catchUp.theyNeed)} more</div>`
-          : `<div class="gc-clinch">You win outright with ${fmtDuration(catchUp.youNeed)} more</div>`;
-      }
-      catchUpWrap.innerHTML = catchUpHtml;
+      catchUpWrap.innerHTML = catchUpHtmlFor(catchUp, opp, remain);
     }
+
+    const pace = over ? null : paceFor(g);
+    const paceWrap = card.querySelector(".gc-pace-wrap");
+    if (pace && paceWrap) paceWrap.innerHTML = paceHtmlFor(pace, opponentOf(g));
   });
+}
+
+/**
+ * Countdown to the deadline that used to live here (how long until a lead
+ * becomes mathematically unwinnable) was misleading on its own — it assumes
+ * the trailing player claims literally every remaining second, so it reads
+ * like a hard deadline when it's really a best-case one. Replaced with the
+ * plain time-until-the-game-ends plus the clinch numbers, which are the
+ * activity-based (not time-based) thing worth actually watching.
+ */
+function catchUpHtmlFor(catchUp, opp, remainMs) {
+  if (!catchUp) return "";
+  if (catchUp.final) {
+    return catchUp.forMe
+      ? `<div class="gc-catchup lost">You can no longer catch up.</div>`
+      : `<div class="gc-catchup safe">${esc(opp?.name || "They")} can no longer catch up.</div>`;
+  }
+  let html = `<div class="gc-catchup">${fmtDuration(Math.max(0, remainMs) / 1000)} until the game ends</div>`;
+  // Only the leader has a meaningful clinch number — the trailing side is by
+  // definition not yet in a position to lock it in.
+  html += catchUp.forMe
+    ? `<div class="gc-clinch">${esc(opp?.name || "They")} win outright with ${fmtDuration(catchUp.theyNeed)} more</div>`
+    : `<div class="gc-clinch">You win outright with ${fmtDuration(catchUp.youNeed)} more</div>`;
+  return html;
+}
+
+function paceHtmlFor(pace, opp) {
+  if (!pace) return "";
+  const rows = pace.windows
+    .map((w) => {
+      const active = w.mine + w.theirs > 0;
+      const cls = w.diff > 0 ? "up" : w.diff < 0 ? "down" : "";
+      const text = active ? `${w.diff > 0 ? "+" : w.diff < 0 ? "−" : ""}${fmtDurationShort(Math.abs(w.diff))}` : "—";
+      return `<div class="gc-pace-row"><span class="gc-pace-label">${esc(w.label)}</span><span class="gc-pace-diff ${cls}">${text}</span></div>`;
+    })
+    .join("");
+  const verdictCls = pace.lead === 0 ? "" : pace.lead > 0 ? "safe" : "lost";
+  const needHtml =
+    pace.needPerBucket != null
+      ? `<div class="gc-pace-need">${
+          pace.forMe
+            ? `You'd need ~${fmtDurationShort(pace.needPerBucket)} more than them per ${pace.bucketLabel} to catch up by the deadline.`
+            : `${esc(opp?.name || "They")} would need ~${fmtDurationShort(pace.needPerBucket)} more than you per ${pace.bucketLabel} to catch up by the deadline.`
+        }</div>`
+      : "";
+  return `<div class="gc-pace">
+    <div class="gc-pace-title">Pace</div>
+    ${rows}
+    <div class="gc-pace-verdict ${verdictCls}">${esc(pace.verdict)}</div>
+    ${needHtml}
+  </div>`;
 }
 
 // --- Rejoin list (setup screen) ---------------------------------------------
