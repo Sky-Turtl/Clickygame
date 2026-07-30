@@ -579,6 +579,16 @@ function renderProfile() {
   const ties = count("tie");
   const ongoing = count("ongoing");
 
+  let bonusSeconds = 0;
+  for (const g of list) {
+    const meId = myId(g);
+    for (const c of g.claims || []) {
+      if (c.status === "settled" && c.by === meId && (c.multiplier || 1) > 1) {
+        bonusSeconds += (c.seconds || 0) - (c.rawSeconds || 0);
+      }
+    }
+  }
+
   setHTML(
     "profile-record",
     [
@@ -586,6 +596,7 @@ function renderProfile() {
       ["Losses", String(losses)],
       ["Ties", String(ties)],
       ["Ongoing", String(ongoing)],
+      ["Bonus time gained", fmtDuration(bonusSeconds)],
     ]
       .map(
         ([l, v]) =>
