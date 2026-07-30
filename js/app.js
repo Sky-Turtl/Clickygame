@@ -1948,12 +1948,14 @@ function catchUpHtmlFor(catchUp, opp, remainMs) {
   return html;
 }
 
-/** "mm:ss", minutes uncapped (e.g. "125:07" for 2h5m7s) — for the tight
+/** "mm:ss", or "hh:mm:ss" once it runs an hour or past — for the tight
  * per-row catch-up parenthetical, where the compact word form reads noisy. */
 function fmtMmSs(seconds) {
   const total = Math.max(0, Math.round(Number(seconds) || 0));
-  const m = Math.floor(total / 60);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
+  if (h > 0) return `${h}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
   return `${m}:${String(s).padStart(2, "0")}`;
 }
 
