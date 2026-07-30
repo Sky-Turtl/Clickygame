@@ -446,6 +446,19 @@ async function creditDuelWin(code, duel, settleClaimId, at) {
       viaDuel: duel.id,
       game: duel.game || null, // which minigame decided it, for the profile's minigame record
       ties: (duel.round || 1) - 1, // redraws before it was decided (round starts at 1)
+      // Raw per-minigame numbers (rolls, distances, guesses, reaction latency,
+      // coin double-or-nothing outcome) for the profile's detailed breakdown.
+      // Absent on duels settled before this shipped.
+      mgDetail: {
+        challenger: duel.challenger,
+        defender: duel.defender,
+        picks: duel.finalPicks || null,
+        detail: duel.detail || null,
+        potSeconds: duel.potSeconds || 0,
+        doubled: !!duel.doubled,
+        doubleLost: !!duel.doubleLost,
+        doubler: duel.doubler || null,
+      },
     },
   });
 }

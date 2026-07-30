@@ -285,6 +285,7 @@ export function applyDoubleChoice(duel, ctx) {
       status: "resolved",
       payoutMultiplier: 2,
       doubled: true,
+      doubler: duel.winner, // who chose to go double — kept separate from `winner` since a lost double swaps that
       resolvedAt: ctx.at,
       settleClaimId: ctx.settleClaimId,
     };
@@ -297,6 +298,7 @@ export function applyDoubleChoice(duel, ctx) {
     payoutMultiplier: 1,
     doubled: true,
     doubleLost: true,
+    doubler: duel.winner,
     resolvedAt: ctx.at,
     settleClaimId: ctx.settleClaimId,
   };

@@ -724,8 +724,8 @@ function renderMinigameRecord(list) {
  * side by side.
  */
 function renderMinigameBreakdown(list, gameFilter) {
-  const byType = {}; // minigame key -> { wins, losses, ties }
-  for (const key of Object.keys(DUEL_META)) byType[key] = { wins: 0, losses: 0, ties: 0 };
+  const byType = {}; // minigame key -> { wins, losses, ties, entries }
+  for (const key of Object.keys(DUEL_META)) byType[key] = { wins: 0, losses: 0, ties: 0, entries: [] };
 
   for (const g of list) {
     if (gameFilter !== "__all__" && g.code !== gameFilter) continue;
@@ -739,23 +739,170 @@ function renderMinigameBreakdown(list, gameFilter) {
       if (won) byType[c.game].wins++;
       else byType[c.game].losses++;
       byType[c.game].ties += c.ties || 0;
+      byType[c.game].entries.push({ at: c.at, seconds: c.seconds || 0, won, meId, mgd: c.mgDetail || null });
     }
   }
 
-  const head = `<thead><tr><th>Minigame</th><th>Wins</th><th>Losses</th><th>Ties</th><th>Win%</th></tr></thead>`;
-  const body =
-    `<tbody>` +
-    Object.entries(DUEL_META)
-      .map(([key, meta]) => {
-        const { wins, losses, ties } = byType[key];
-        const total = wins + losses;
-        const pct = total ? `${Math.round((wins / total) * 100)}%` : "—";
-        return `<tr><td style="color:${meta.color}">${meta.icon} ${esc(meta.label)}</td><td class="num">${wins}</td><td class="num">${losses}</td><td class="num">${ties}</td><td class="num">${pct}</td></tr>`;
-      })
-      .join("") +
-    `</tbody>`;
+  const html = Object.entries(DUEL_META)
+    .map(([key, meta]) => {
+      const { wins, losses, ties, entries } = byType[key];
+      const total = wins + losses;
+      const pct = total ? `${Math.round((wins / total) * 100)}%` : "—";
+      return `<li class="mg-row" style="--mg-color:${meta.color}">
+        <details>
+          <summary>
+            <span class="mg-tag">${meta.icon} ${esc(meta.label)}</span>
+            <span class="mg-rec">${wins}W – ${losses}L${ties ? ` – ${ties}T` : ""}</span>
+            <span class="mg-pct">${pct}</span>
+          </summary>
+          <div class="mg-detail">${minigameDetailHtml(key, entries)}</div>
+        </details>
+      </li>`;
+    })
+    .join("");
 
-  setHTML("profile-minigame-breakdown", head + body);
+  $("profile-minigame-breakdown").innerHTML = html;
+}
+
+const mean = (arr) => arr.reduce((s, v) => s + v, 0) / arr.length;
+/** Most frequent value; ties break toward whichever appears first. */
+function mode(arr) {
+  const counts = new Map();
+  let best = null;
+  let bestCount = 0;
+  for (const v of arr) {
+    const c = (counts.get(v) || 0) + 1;
+    counts.set(v, c);
+    if (c > bestCount) {
+      best = v;
+      bestCount = c;
+    }
+  }
+  return best;
+}
+
+function mgStat(label, value) {
+  return `<div class="mg-stat"><span class="mg-stat-label">${esc(label)}</span><span class="mg-stat-value">${value}</span></div>`;
+}
+
+/** Deeper numbers for one minigame type, built from each claim's persisted `mgDetail` — absent on duels settled before this shipped. */
+function minigameDetailHtml(key, entries) {
+  const tracked = entries.filter((e) => e.mgd && (e.mgd.detail || e.mgd.picks));
+  if (!tracked.length) {
+    return `<p class="mg-empty">${entries.length ? "No detailed numbers recorded for these — they're from before per-throw tracking shipped." : "No duels here yet."}</p>`;
+  }
+  const untracked = entries.length - tracked.length;
+  const note = untracked
+    ? `<p class="mg-empty">${untracked} earlier duel${untracked === 1 ? "" : "s"} here ${untracked === 1 ? "isn't" : "aren't"} counted below (no detail recorded).</p>`
+    : "";
+
+  const mine = (e, sideA, sideB) => {
+    const d = e.mgd.detail;
+    if (!d) return null;
+    return e.mgd.challenger === e.meId ? d[sideA] : d[sideB];
+  };
+
+  switch (key) {
+    case "dice": {
+      const rolls = tracked.map((e) => mine(e, "rollA", "rollB")).filter((v) => Number.isFinite(v));
+      if (!rolls.length) return note || `<p class="mg-empty">No rolls recorded.</p>`;
+      return (
+        mgStat("Most rolled", mode(rolls)) +
+        mgStat("Average roll", mean(rolls).toFixed(2)) +
+        mgStat("Rolls tracked", rolls.length) +
+        note
+      );
+    }
+    case "golf": {
+      const dists = tracked.map((e) => mine(e, "distA", "distB")).filter((v) => Number.isFinite(v));
+      if (!dists.length) return note || `<p class="mg-empty">No putts recorded.</p>`;
+      const holesMade = dists.filter((d) => d === 0).length;
+      let bestStreak = 0,
+        cur = 0;
+      for (const e of tracked.slice().sort((a, b) => a.at - b.at)) {
+        if (e.won) {
+          cur++;
+          bestStreak = Math.max(bestStreak, cur);
+        } else cur = 0;
+      }
+      return (
+        mgStat("Holes made", holesMade) +
+        mgStat("Best win streak", bestStreak) +
+        mgStat("Closest putt", `${Math.round(Math.min(...dists))} from the hole`) +
+        mgStat("Furthest miss", `${Math.round(Math.max(...dists))} from the hole`) +
+        mgStat("Average distance", Math.round(mean(dists))) +
+        note
+      );
+    }
+    case "coin": {
+      const doubles = tracked.filter((e) => e.mgd.doubled && e.mgd.doubler === e.meId);
+      const doublesWon = doubles.filter((e) => !e.mgd.doubleLost);
+      const gained = doublesWon.reduce((s, e) => s + (e.seconds - (e.mgd.potSeconds || 0)), 0);
+      return (
+        mgStat("Went double-or-nothing", doubles.length) +
+        mgStat("Doubles won", doublesWon.length) +
+        mgStat("Time gained from doubling", fmtDuration(gained)) +
+        note
+      );
+    }
+    case "rps": {
+      const throws = tracked.map((e) => e.mgd.picks?.[e.meId]).filter(Boolean);
+      if (!throws.length) return note || `<p class="mg-empty">No throws recorded.</p>`;
+      const wonThrows = tracked.filter((e) => e.won).map((e) => e.mgd.picks?.[e.meId]).filter(Boolean);
+      const perSymbol = THROWS.map((sym) => {
+        const mineOfSym = tracked.filter((e) => e.mgd.picks?.[e.meId] === sym);
+        const winsOfSym = mineOfSym.filter((e) => e.won).length;
+        const pct = mineOfSym.length ? `${Math.round((winsOfSym / mineOfSym.length) * 100)}%` : "—";
+        return mgStat(`${THROW_EMOJI[sym]} ${sym} winrate`, `${pct} (${mineOfSym.length})`);
+      }).join("");
+      return (
+        mgStat("Most used throw", `${THROW_EMOJI[mode(throws)]} ${mode(throws)}`) +
+        (wonThrows.length ? mgStat("Most won with", `${THROW_EMOJI[mode(wonThrows)]} ${mode(wonThrows)}`) : "") +
+        perSymbol +
+        note
+      );
+    }
+    case "reaction": {
+      const latencies = tracked
+        .map((e) => {
+          const falseStart = mine(e, "falseStartA", "falseStartB");
+          const latency = mine(e, "latencyA", "latencyB");
+          return falseStart || !Number.isFinite(latency) || latency < 0 ? null : latency;
+        })
+        .filter((v) => v !== null);
+      if (!latencies.length) return note || `<p class="mg-empty">No clean reactions recorded.</p>`;
+      return (
+        mgStat("Fastest", `${Math.round(Math.min(...latencies))}ms`) +
+        mgStat("Slowest", `${Math.round(Math.max(...latencies))}ms`) +
+        mgStat("Average", `${Math.round(mean(latencies))}ms`) +
+        note
+      );
+    }
+    case "closest": {
+      const guesses = tracked
+        .map((e) => {
+          const raw = Number(e.mgd.picks?.[e.meId]);
+          if (!Number.isFinite(raw)) return null;
+          // Legacy 1-100 guesses (if the range ever changes) fold down to 1-10.
+          const bucket = raw > 10 ? Math.max(1, Math.min(10, Math.round(raw / 10))) : Math.round(raw);
+          return { bucket, won: e.won };
+        })
+        .filter(Boolean);
+      if (!guesses.length) return note || `<p class="mg-empty">No guesses recorded.</p>`;
+      const rows = Array.from({ length: 10 }, (_, i) => i + 1)
+        .map((n) => {
+          const of = guesses.filter((g) => g.bucket === n);
+          if (!of.length) return "";
+          const wins = of.filter((g) => g.won).length;
+          const pct = `${Math.round((wins / of.length) * 100)}%`;
+          return mgStat(`Guessed ${n}`, `${pct} winrate (${of.length})`);
+        })
+        .join("");
+      return rows + note;
+    }
+    default:
+      return note || `<p class="mg-empty">Nothing tracked for this minigame yet.</p>`;
+  }
 }
 
 // --- Derived helpers --------------------------------------------------------
@@ -1946,16 +2093,22 @@ function duelTag(g, minigameKey) {
   if (!meta) return '<span class="f-tag duel">DUEL</span>';
   const meId = myId(g);
   let wins = 0,
-    losses = 0;
+    losses = 0,
+    ties = 0;
   for (const c of g.claims || []) {
     if (!c.viaDuel || c.status !== "settled" || c.game !== minigameKey) continue;
     if (c.by === meId) wins++;
     else losses++;
+    ties += c.ties || 0;
   }
-  const total = wins + losses;
-  const pct = total ? ` (${Math.round((wins / total) * 100)}%)` : "";
-  const title = `${meta.label} — you: ${wins}W-${losses}L${pct}`;
-  return `<span class="f-tag duel" style="--mg-color:${meta.color}" title="${esc(title)}">${meta.icon} ${esc(meta.label)}</span>`;
+  return `<span class="f-tag duel gc-duel-badge" style="--mg-color:${meta.color}" tabindex="0">
+    ${meta.icon} ${esc(meta.label)}
+    <div class="gc-duel-tip">
+      <div class="gc-duel-tip-record">
+        <span class="win">${wins}W</span> · <span class="loss">${losses}L</span> · <span class="tie">${ties} tie${ties === 1 ? "" : "s"}</span>
+      </div>
+    </div>
+  </span>`;
 }
 
 function renderFeed(hostId, g, limit) {
