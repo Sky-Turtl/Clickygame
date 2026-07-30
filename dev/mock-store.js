@@ -351,6 +351,17 @@ function creditDuelWin(game, duel, settleClaimId, at) {
     status: "settled",
     viaDuel: duel.id,
     game: duel.game || null,
+    ties: (duel.round || 1) - 1,
+    mgDetail: {
+      challenger: duel.challenger,
+      defender: duel.defender,
+      picks: duel.finalPicks || null,
+      detail: duel.detail || null,
+      potSeconds: duel.potSeconds || 0,
+      doubled: !!duel.doubled,
+      doubleLost: !!duel.doubleLost,
+      doubler: duel.doubler || null,
+    },
   };
 }
 

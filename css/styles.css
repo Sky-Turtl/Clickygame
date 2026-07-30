@@ -689,6 +689,22 @@ input[type=date] { color-scheme: dark; }
 .summary-table .sub { color: var(--text-faint); font-size: 11.5px; }
 .summary-table .win { color: var(--green); }
 
+.mg-breakdown { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.mg-row { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.mg-row summary {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 12px; cursor: pointer; list-style: none; user-select: none;
+}
+.mg-row summary::-webkit-details-marker { display: none; }
+.mg-row .mg-tag { font-size: 13px; font-weight: 700; color: var(--mg-color, var(--text)); }
+.mg-row .mg-rec { margin-left: auto; font-family: var(--mono); font-size: 13px; color: var(--text); }
+.mg-row .mg-pct { font-family: var(--mono); font-size: 12px; color: var(--text-faint); min-width: 40px; text-align: right; }
+.mg-detail { padding: 4px 12px 12px; border-top: 1px solid var(--line); display: flex; flex-direction: column; gap: 2px; }
+.mg-stat { display: flex; justify-content: space-between; gap: 10px; padding: 5px 0; font-size: 12.5px; }
+.mg-stat-label { color: var(--text-dim); }
+.mg-stat-value { font-family: var(--mono); color: var(--text); text-align: right; }
+.mg-empty { margin: 8px 0 0; color: var(--text-faint); font-size: 12px; }
+
 .stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 12px; }
 .stat { background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
 .stat-label { font-size: 11.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .08em; }
