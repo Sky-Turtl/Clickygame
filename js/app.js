@@ -2234,7 +2234,6 @@ function renderDuelModal() {
           <p class="modal-lock" data-el="lock">You can't claim again until you've made your move.</p>
         </div>`;
       host.appendChild(card);
-      newlyOpened.push(card);
 
       // Wire the picker once and read live duel state at click time — the
       // markup inside gets rebuilt on every render, but delegation means the
