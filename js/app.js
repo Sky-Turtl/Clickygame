@@ -1054,47 +1054,17 @@ function tick() {
   for (const g of games.values()) {
     checkWindows(g);
     checkDuelExpiry(g);
-    checkReactionGate(g);
   }
   render();
 }
 
-/** code -> id of the last "am I clear to start reaction" value this client reported for a duel. */
-const reactionClearReported = new Map();
-
 /**
- * A reaction duel waits on both sides reporting they've got no other open
- * duel elsewhere, *and* have this tab actually foregrounded, before its goAt
- * is set (see engine.applyStartReaction). Each client can only speak for its
- * own player — only this device knows what other games its own player is in,
- * or whether its own tab is visible — so it self-reports here.
+ * A player clicked "I'm ready" on a reaction duel. Reports their side clear
+ * and, if that makes both sides clear, starts the round's clock (see
+ * engine.applyReactionClear/applyStartReaction, driven by db.checkReactionStart).
  */
-function checkReactionGate(g) {
-  const d = g.state?.duel;
-  if (!d || d.status !== "open" || d.game !== "reaction") return;
-  if (d.goAt) {
-    reactionClearReported.delete(d.id); // started — no longer relevant, keep the map from growing
-    return;
-  }
-  const meId = myId(g);
-  if (d.challenger !== meId && d.defender !== meId) return;
-
-  const iAmClear = document.visibilityState === "visible" && !hasOtherOpenDuel(g.code, d.id);
-  if (reactionClearReported.get(d.id) === iAmClear) return;
-  reactionClearReported.set(d.id, iAmClear);
-  db.checkReactionStart(g.code, d.id, meId, iAmClear);
-}
-
-/** Is this device's own player still tied up in some other unsettled duel? */
-function hasOtherOpenDuel(excludeCode, excludeDuelId) {
-  for (const g2 of games.values()) {
-    const d2 = g2.state?.duel;
-    if (!d2 || d2.id === excludeDuelId) continue;
-    if (!duelUnsettled(d2)) continue;
-    const pid2 = myId(g2);
-    if (d2.challenger === pid2 || d2.defender === pid2) return true;
-  }
-  return false;
+async function markReactionReady(code, duelId, playerId) {
+  await db.checkReactionStart(code, duelId, playerId, true);
 }
 
 /**
@@ -2190,6 +2160,15 @@ function renderDuelModal() {
           submitPick(val);
           return;
         }
+        const readyBtn = e.target.closest("[data-reaction-ready]");
+        if (readyBtn) {
+          const cur = games.get(g.code);
+          const curDuel = cur?.state?.duel;
+          if (!curDuel || curDuel.id !== d.id) return;
+          readyBtn.disabled = true;
+          markReactionReady(g.code, curDuel.id, myId(g)).then(render);
+          return;
+        }
         const btn = e.target.closest("[data-pick]");
         if (!btn || btn.disabled) return;
         const kind = btn.dataset.pick;
@@ -2245,7 +2224,9 @@ function renderDuelModal() {
     const pickerEl = el("picker");
     pickerEl.classList.toggle("hidden", resolved);
     if (!resolved) {
-      const sig = `${d.status}|${d.game}|${d.round}|${iPicked}|${d.game === "reaction" ? db.now() >= d.goAt : ""}`;
+      const sig = `${d.status}|${d.game}|${d.round}|${iPicked}|${
+        d.game === "reaction" ? `${db.now() >= d.goAt}|${!!d.reactionClear?.[meId]}` : ""
+      }`;
       if (pickerEl.dataset.sig !== sig) {
         pickerEl.dataset.sig = sig;
         pickerEl.innerHTML = pickerHtml(d, iPicked, meId);
@@ -2412,8 +2393,14 @@ function pickerHtml(d, iPicked, meId) {
     case "dice":
       return `<button type="button" class="btn btn-primary duel-tap" data-pick="roll">🎲 Roll the die</button>`;
     case "reaction": {
-      const ready = db.now() >= d.goAt;
-      return ready
+      if (!d.goAt) {
+        const iAmReady = !!d.reactionClear?.[meId];
+        return iAmReady
+          ? `<div class="duel-locked">Ready. Waiting for the other side…</div>`
+          : `<button type="button" class="btn btn-primary duel-tap" data-reaction-ready>I'm ready</button>`;
+      }
+      const go = db.now() >= d.goAt;
+      return go
         ? `<button type="button" class="btn btn-primary duel-tap go" data-pick="tap">TAP NOW!</button>`
         : `<button type="button" class="btn btn-ghost duel-tap wait" data-pick="tap">Wait for it…</button>`;
     }
