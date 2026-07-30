@@ -264,9 +264,10 @@ export function applySettle(duel, ctx) {
 
 /**
  * The coin winner takes their win, or gambles it on one more flip for double.
- * Losing the double-or-nothing flip hands the whole (undoubled) pot to the
- * original loser instead — the winner's win is what's at stake, not a second
- * independent wager.
+ * Losing the double-or-nothing flip doesn't hand the pot to anyone — it's
+ * simply gone, the same as if neither player had ever claimed that time.
+ * `winner`/`loser` are left as-is (the original flip's result), so the
+ * hover/result UI can still say who won the flip that got doubled away.
  *
  * @param duel current duel node
  * @param ctx  { duelId, playerId, choice: "take"|"double", at, settleClaimId }
@@ -295,11 +296,10 @@ export function applyDoubleChoice(duel, ctx) {
   return {
     ...duel,
     status: "resolved",
-    winner: duel.loser,
-    loser: duel.winner,
-    payoutMultiplier: 1,
+    payoutMultiplier: 0,
     doubled: true,
     doubleLost: true,
+    potLost: true,
     doubler: duel.winner,
     resolvedAt: ctx.at,
     settleClaimId: ctx.settleClaimId,

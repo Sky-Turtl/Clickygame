@@ -2612,9 +2612,13 @@ function duelTag(g, row) {
   const meta = DUEL_META[row.game];
   if (!meta) return '<span class="f-tag duel">DUEL</span>';
   const meId = myId(g);
-  const verdict = row.mine
-    ? `<span class="win">You won</span>`
-    : `<span class="loss">${esc(g.players?.[row.by]?.name || "They")} won</span>`;
+  // A lost double-or-nothing leaves `row.by` as whoever won the original
+  // flip, but nobody actually banked the pot — say so instead of "won".
+  const verdict = row.mgDetail?.potLost
+    ? `<span class="loss">${row.mine ? "You" : esc(g.players?.[row.by]?.name || "They")} won the flip, but the double lost — nobody claimed it</span>`
+    : row.mine
+      ? `<span class="win">You won</span>`
+      : `<span class="loss">${esc(g.players?.[row.by]?.name || "They")} won</span>`;
 
   let detailLine = "";
   if (row.mgDetail?.detail || row.mgDetail?.picks) {
@@ -2631,11 +2635,18 @@ function duelTag(g, row) {
 
   const tieNote = row.ties ? `<div class="gc-duel-tip-streak">${row.ties} redraw${row.ties === 1 ? "" : "s"} first</div>` : "";
 
+  let doubleNote = "";
+  if (row.mgDetail?.doubled && !row.mgDetail?.potLost) {
+    const doublerName = row.mgDetail.doubler === meId ? "You" : g.players?.[row.mgDetail.doubler]?.name || "They";
+    doubleNote = `<div class="gc-duel-tip-streak">${doublerName} went double-or-nothing and won.</div>`;
+  }
+
   return `<span class="f-tag duel gc-duel-badge" style="--mg-color:${meta.color}" tabindex="0">
     ${meta.icon} ${esc(meta.label)}
     <div class="gc-duel-tip">
       <div class="gc-duel-tip-record">${verdict}</div>
       ${detailLine}
+      ${doubleNote}
       ${tieNote}
     </div>
   </span>`;
@@ -3134,7 +3145,7 @@ function renderDuelModal() {
 
         const doubleNote = d.doubled
           ? d.doubleLost
-            ? `<div class="rr-detail">Double-or-nothing gone wrong — the win flipped sides on the extra flip.</div>`
+            ? `<div class="rr-detail">Double-or-nothing gone wrong — the pot's gone, nobody claims it.</div>`
             : `<div class="rr-detail">Doubled it! 🔥</div>`
           : "";
         const timeoutNote = d.timedOut
@@ -3147,7 +3158,15 @@ function renderDuelModal() {
         const oppGolfPath = golfPaths?.[oppId];
         const golfReplayHtml =
           myGolfPath || oppGolfPath ? `<div class="golf-replay" data-el="golf-replay"></div>` : "";
-        const restHtml = `
+        const restHtml = d.potLost
+          ? `
+          <div class="rr-throws">${resultDetailHtml(d, meId, oppId, oppName)}</div>
+          <div class="rr-verdict lost">Nobody takes it</div>
+          <div class="rr-detail">The double-or-nothing flip lost — the pot's gone for good, ${esc(oppName)} gets nothing either.</div>
+          ${timeoutNote}
+          ${doubleNote}
+          ${golfReplayHtml}`
+          : `
           <div class="rr-throws">${resultDetailHtml(d, meId, oppId, oppName)}</div>
           <div class="rr-verdict ${iWon ? "won" : "lost"}">${iWon ? "You take it" : "You lose it"}</div>
           <div class="rr-detail">${
