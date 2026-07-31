@@ -455,6 +455,7 @@ async function creditDuelWin(code, duel, settleClaimId, at) {
         picks: duel.finalPicks || null,
         detail: duel.detail || null,
         potSeconds: duel.potSeconds || 0,
+        payoutMultiplier: mult,
         doubled: !!duel.doubled,
         doubleLost: !!duel.doubleLost,
         potLost: !!duel.potLost,
