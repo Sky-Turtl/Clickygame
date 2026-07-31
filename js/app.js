@@ -1289,10 +1289,22 @@ function minigameDetailHtml(key, entries) {
       const runs = tracked.map((e) => mine(e, "crashA", "crashB")).filter((v) => Number.isFinite(v));
       if (!runs.length) return note || `<p class="mg-empty">No runs recorded.</p>`;
       const cashed = runs.filter((v) => v > 0);
+      const diffs = tracked
+        .map((e) => {
+          const d = e.mgd.detail;
+          return d && Number.isFinite(d.crashA) && Number.isFinite(d.crashB) ? Math.abs(d.crashA - d.crashB) : null;
+        })
+        .filter((v) => v !== null);
+      const wonEntries = tracked.filter((e) => e.won);
+      const mults = wonEntries.map((e) => e.mgd.payoutMultiplier).filter((v) => Number.isFinite(v));
+      const claimed = wonEntries.map((e) => e.seconds).filter((v) => Number.isFinite(v) && v > 0);
       return (
         mgStat("Best cash-out", cashed.length ? `${Math.max(...cashed).toFixed(2)}x` : "—") +
         mgStat("Average cash-out", cashed.length ? `${mean(cashed).toFixed(2)}x` : "—") +
         mgStat("Times busted", runs.filter((v) => v === 0).length) +
+        mgStat("Biggest gap", diffs.length ? `${Math.max(...diffs).toFixed(2)}x` : "—") +
+        mgStat("Highest payout", mults.length ? `${Math.max(...mults).toFixed(2)}x` : "—") +
+        mgStat("Biggest win", claimed.length ? fmtDuration(Math.max(...claimed)) : "—") +
         note
       );
     }
