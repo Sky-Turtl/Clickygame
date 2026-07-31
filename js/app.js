@@ -3501,6 +3501,10 @@ const CRASH_MS_PER_DOUBLE = 10000;
 const CRASH_K0 = Math.log(2) / CRASH_MS_PER_DOUBLE;
 const CRASH_RAMP_MS = 20000;
 const CRASH_TICK_MS = 60;
+// How long a bust holds "💥 Busted at X.XXx" on screen before the pick is
+// actually submitted — long enough to register what happened before either
+// the result screen or (on a redraw) the next round's rocket takes over.
+const CRASH_BUST_HOLD_MS = 2000;
 
 function crashMultiplierAt(elapsedMs) {
   return Math.exp(CRASH_K0 * elapsedMs + (CRASH_K0 / (2 * CRASH_RAMP_MS)) * elapsedMs * elapsedMs);
@@ -3526,7 +3530,10 @@ function crashElapsedForMultiplier(m) {
  * early and you probably lose to whoever held their nerve longer, wait too
  * long and you both bust at essentially the same instant. A bust reports 0,
  * not the bust multiplier: the whole point of busting is that you get
- * nothing, and 0 is what feeds the payout-gap math on the result screen.
+ * nothing, and 0 is what feeds the payout-gap math on the result screen. A
+ * bust holds "Busted at X.XXx" on screen for CRASH_BUST_HOLD_MS before
+ * `onDone` actually fires, instead of the result (or a redraw's next round)
+ * cutting straight over it.
  *
  * @param onDone called once with the final number (0 if busted).
  */
@@ -3548,9 +3555,16 @@ function mountCrash(container, duelId, round, roundStartAt, onDone) {
     done = true;
     clearInterval(interval);
     btn.disabled = true;
-    faceEl.textContent = busted ? "💥 Busted" : `📈 ${result.toFixed(2)}x`;
-    faceEl.classList.toggle("busted", busted);
-    onDone(result);
+    if (busted) {
+      faceEl.textContent = `💥 Busted at ${bustPoint.toFixed(2)}x`;
+      faceEl.classList.add("busted");
+      // Hold the bust on screen instead of submitting (and letting the next
+      // round's rocket take over) immediately.
+      setTimeout(() => onDone(result), CRASH_BUST_HOLD_MS);
+    } else {
+      faceEl.textContent = `📈 ${result.toFixed(2)}x`;
+      onDone(result);
+    }
   }
 
   const interval = setInterval(() => {
