@@ -1028,6 +1028,16 @@ function minigameDetailHtml(key, entries) {
         note
       );
     }
+    case "crash": {
+      const runs = tracked.map((e) => mine(e, "crashA", "crashB")).filter((v) => Number.isFinite(v));
+      if (!runs.length) return note || `<p class="mg-empty">No runs recorded.</p>`;
+      return (
+        mgStat("Best run", `${Math.max(...runs).toFixed(2)}x`) +
+        mgStat("Average run", `${mean(runs).toFixed(2)}x`) +
+        mgStat("Instant busts", runs.filter((v) => v === 1).length) +
+        note
+      );
+    }
     case "golf": {
       const distOf = (e) => mine(e, "distA", "distB");
       const dists = tracked.map(distOf).filter((v) => Number.isFinite(v));
@@ -2785,6 +2795,7 @@ function renderDuelModal() {
     const isCoin = d.game === "coin";
     const coinFace = isCoin ? d.detail?.result : null;
     const isDice = d.game === "dice";
+    const isCrash = d.game === "crash";
 
     // Picker (also hosts the coin's double-or-nothing choice, once decided)
     const pickerEl = el("picker");
@@ -2846,9 +2857,18 @@ function renderDuelModal() {
         playDiceRoll(resultEl);
       }
 
+      // Same idea for the rocket: climb for a beat before the settled
+      // multiplier lands.
+      if (isCrash && resultEl.dataset.crashSig !== resultSig) {
+        resultEl.dataset.crashSig = resultSig;
+        card.dataset.crashRevealAt = String(db.now() + CRASH_RUN_MS);
+        playCrash(resultEl);
+      }
+
       const stillFlipping = coinFace && card.dataset.coinRevealAt && db.now() < Number(card.dataset.coinRevealAt);
       const stillRolling = isDice && card.dataset.diceRevealAt && db.now() < Number(card.dataset.diceRevealAt);
-      const stillAnimating = stillFlipping || stillRolling;
+      const stillLaunching = isCrash && card.dataset.crashRevealAt && db.now() < Number(card.dataset.crashRevealAt);
+      const stillAnimating = stillFlipping || stillRolling || stillLaunching;
       statusEl.textContent = "";
 
       // While the coin/die is still animating, the pot stays on the "in
@@ -2900,7 +2920,8 @@ function renderDuelModal() {
             <div class="coin-outcome ${finalFace}">${finalFace === "heads" ? "Heads" : "Tails"}</div>`
           : "";
         const diceHtml = isDice ? `<div class="dice-flip-stage"><div class="dice-face">🎲</div></div>` : "";
-        resultEl.innerHTML = `${coinHtml}${diceHtml}${restHtml}`;
+        const crashHtml = isCrash ? `<div class="crash-flip-stage"><div class="crash-face">📈</div></div>` : "";
+        resultEl.innerHTML = `${coinHtml}${diceHtml}${crashHtml}${restHtml}`;
 
         if (myGolfPath || oppGolfPath) {
           const mount = resultEl.querySelector('[data-el="golf-replay"]');
@@ -2990,6 +3011,8 @@ function pickerHtml(d, iPicked, meId) {
       </div>`;
     case "dice":
       return `<button type="button" class="btn btn-primary duel-tap" data-pick="roll">🎲 Roll the die</button>`;
+    case "crash":
+      return `<button type="button" class="btn btn-primary duel-tap" data-pick="launch">📈 Launch</button>`;
     case "reaction": {
       if (!d.goAt) {
         const iAmReady = !!d.reactionClear?.[meId];
@@ -3088,6 +3111,37 @@ function playDiceRoll(el) {
   setTimeout(() => clearInterval(interval), DICE_ROLL_MS);
 }
 
+const CRASH_RUN_MS = 1000;
+const CRASH_TICK_MS = 60;
+let crashRunSeq = 0;
+
+/**
+ * Animate a crash run into `el`: a multiplier climbs from 1.00x for
+ * CRASH_RUN_MS, purely as a client-side reveal delay for suspense — the
+ * actual crash point is already decided server-side. The caller (render)
+ * rebuilds `el` with the settled result once card.dataset.crashRevealAt
+ * elapses.
+ */
+function playCrash(el) {
+  const token = String(++crashRunSeq);
+  el.dataset.runToken = token;
+  el.innerHTML = `<div class="crash-flip-stage"><div class="crash-face climb">📈 1.00x</div></div>`;
+  const faceEl = el.querySelector(".crash-face");
+
+  const ticks = Math.round(CRASH_RUN_MS / CRASH_TICK_MS);
+  let tick = 0;
+  const interval = setInterval(() => {
+    if (el.dataset.runToken !== token) return clearInterval(interval);
+    tick++;
+    // Ease toward a plausible mid-flight number — the eventual settle swaps
+    // in the real value, so this just needs to feel like it's climbing.
+    const shown = 1 + (tick / ticks) ** 2 * 4;
+    faceEl.textContent = `📈 ${shown.toFixed(2)}x`;
+  }, CRASH_TICK_MS);
+
+  setTimeout(() => clearInterval(interval), CRASH_RUN_MS);
+}
+
 /** The "X vs Y" line on the result screen, tailored to whichever minigame decided it. */
 function resultDetailHtml(d, meId, oppId, oppName) {
   const picks = d.finalPicks || {};
@@ -3110,6 +3164,11 @@ function resultDetailHtml(d, meId, oppId, oppName) {
       const mine = mineIsChallenger ? detail.rollA : detail.rollB;
       const theirs = mineIsChallenger ? detail.rollB : detail.rollA;
       return `🎲 You rolled ${mine} · ${esc(oppName)} rolled ${theirs}`;
+    }
+    case "crash": {
+      const mine = mineIsChallenger ? detail.crashA : detail.crashB;
+      const theirs = mineIsChallenger ? detail.crashB : detail.crashA;
+      return `📈 You hit ${mine.toFixed(2)}x · ${esc(oppName)} hit ${theirs.toFixed(2)}x`;
     }
     case "golf": {
       const mine = mineIsChallenger ? detail.distA : detail.distB;

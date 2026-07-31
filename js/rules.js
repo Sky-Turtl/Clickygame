@@ -128,6 +128,12 @@ export const DUEL_META = {
     color: "#4dd0e1",
     rule: "One putt each — drag back and release. Closest to the hole wins; sink it and you can't lose.",
   },
+  crash: {
+    label: "Crash",
+    icon: "📈",
+    color: "#ff8a3d",
+    rule: "Launch your rocket — it climbs until it busts. Higher multiplier wins, and the bigger the gap the more you take home. Both bust and it's a redraw.",
+  },
 };
 
 // --- Catch-up math -----------------------------------------------------------

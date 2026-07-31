@@ -22,7 +22,7 @@ import { hashString, mulberry32 } from "./util.js";
 // after they've committed their picks, so nobody can reverse the formula to
 // guarantee a win.
 
-export const DUEL_GAMES = ["rps", "closest", "coin", "dice", "reaction", "golf"];
+export const DUEL_GAMES = ["rps", "closest", "coin", "dice", "reaction", "golf", "crash"];
 
 // Dev-only override so a specific minigame can be play-tested against the
 // demo bot without racing for a random one. Set via setForcedGame (app.js
@@ -43,6 +43,34 @@ function seededFloat(seed) {
 function pickGame(duelId) {
   if (forcedGame) return forcedGame;
   return DUEL_GAMES[Math.floor(seededFloat(`${duelId}|game`) * DUEL_GAMES.length)];
+}
+
+/**
+ * One player's crash-game run: an exchange multiplier that grows from 1.00x
+ * and busts at a random point, shaped like a real crash game rather than a
+ * flat random number. A small slice of runs bust instantly at 1.00x; the
+ * rest are drawn through 1/(1-x), the standard crash-curve distribution —
+ * most land low (1-3x), with a long, increasingly rare tail toward 100x.
+ */
+function generateCrashPoint(seed) {
+  const u = seededFloat(seed);
+  const INSTANT_BUST_CHANCE = 0.04;
+  if (u < INSTANT_BUST_CHANCE) return 1;
+  const remapped = (u - INSTANT_BUST_CHANCE) / (1 - INSTANT_BUST_CHANCE);
+  const point = 1 / (1 - remapped * 0.99);
+  return Math.round(point * 100) / 100;
+}
+
+/**
+ * Payout on top of the pot for a crash duel: grows with the log of the gap
+ * between the two crash points, so a narrow win pays close to 1x while a
+ * blowout (someone's run went to the moon while the other busted at 1.00x)
+ * pays several times over — without the runaway scale a linear multiplier
+ * on raw difference would give.
+ */
+function crashPayoutMultiplier(crashA, crashB) {
+  const diff = Math.abs(crashA - crashB);
+  return Math.round((1 + Math.log(1 + diff)) * 100) / 100;
 }
 
 /**
@@ -104,6 +132,15 @@ function resolveGame(duel, a, b, ctx) {
       const da = Number(a);
       const db = Number(b);
       return { verdict: da < db ? 1 : da > db ? -1 : 0, detail: { distA: da, distB: db } };
+    }
+    case "crash": {
+      // Each side runs their own crash curve; higher surviving multiplier
+      // wins. Two instant busts at 1.00x is a wash — nothing to separate
+      // them on — so it redraws same as any other tie.
+      const crashA = generateCrashPoint(`${duel.id}|${duel.challenger}|${ctx.at}|crash`);
+      const crashB = generateCrashPoint(`${duel.id}|${duel.defender}|${ctx.at}|crash`);
+      if (crashA === crashB) return { verdict: 0, detail: { crashA, crashB } };
+      return { verdict: crashA > crashB ? 1 : -1, detail: { crashA, crashB } };
     }
     case "rps":
     default:
@@ -245,6 +282,9 @@ export function applySettle(duel, ctx) {
     return { ...duel, status: "double_offer", winner, loser, finalPicks: picks, detail, decidedAt: ctx.at };
   }
 
+  const payoutMultiplier =
+    duel.game === "crash" ? crashPayoutMultiplier(detail.crashA, detail.crashB) : 1;
+
   return {
     ...duel,
     status: "resolved",
@@ -252,7 +292,7 @@ export function applySettle(duel, ctx) {
     loser,
     finalPicks: picks,
     detail,
-    payoutMultiplier: 1,
+    payoutMultiplier,
     resolvedAt: ctx.at,
     // Our fingerprint: whichever client's value survives the transaction is the
     // one responsible for writing the settlement to the claims log.
