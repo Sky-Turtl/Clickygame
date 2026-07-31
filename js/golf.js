@@ -117,7 +117,6 @@ export function mountGolf(container, seed, round, onDone) {
   const actions = document.createElement("div");
   actions.className = "golf-actions hidden";
   actions.innerHTML = `
-    <button type="button" class="btn btn-ghost" data-golf="reaim">Re-aim</button>
     <button type="button" class="btn btn-primary" data-golf="putt">Putt</button>`;
   container.appendChild(actions);
 
@@ -211,9 +210,9 @@ export function mountGolf(container, seed, round, onDone) {
       return; // too soft to count as an aim — try again
     }
     // Hold the aim as a pending shot instead of firing immediately — the
-    // player confirms with the Putt button (or scraps it with Re-aim).
+    // player confirms with the Putt button.
     pending = { x: (dx / MAX_PULL) * SHOT_SPEED, y: (dy / MAX_PULL) * SHOT_SPEED };
-    hint.textContent = "Putt when ready, or re-aim.";
+    hint.textContent = "Putt when ready.";
     actions.classList.remove("hidden");
     draw();
   }
@@ -230,14 +229,6 @@ export function mountGolf(container, seed, round, onDone) {
   function onAction(e) {
     const btn = e.target.closest("[data-golf]");
     if (!btn) return;
-    if (btn.dataset.golf === "reaim") {
-      pending = null;
-      dragTo = null;
-      actions.classList.add("hidden");
-      hint.textContent = "Drag back from the ball, then let go to aim.";
-      draw();
-      return;
-    }
     // Putt: hand the confirmed velocity to the physics sim.
     vel = pending;
     pending = null;
