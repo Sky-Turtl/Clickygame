@@ -46,17 +46,17 @@ function pickGame(duelId) {
 }
 
 /**
- * The hidden multiplier at which one player's own crash run would bust —
- * played out live in the rocket widget (see mountCrash in app.js), which
- * climbs in real time and lets that player cash out whenever they like.
- * Riding it past this point (not clicking in time) is what busts them.
- * Drawn through 1/(1-x), the standard crash-curve distribution — most bust
- * points land low (1-3x), with a long tail that's uncapped (P(hit X or
- * higher) ~ 1/X) rather than topping out at some fixed ceiling — a 1000x+
- * point is exponentially rarer than a 100x one, not impossible.
- * MAX_CRASH_POINT only guards the float math at the extreme tail (the draw
- * landing so close to 1 that 1/(1-x) would overflow toward Infinity), not a
- * real gameplay cap.
+ * The hidden multiplier at which a crash duel's rocket busts — one shared
+ * bust point per (duel, round), not one per player, so both sides are
+ * racing the exact same climb (see mountCrash in app.js): it plays out live
+ * in real time and either player can cash out whenever they like. Riding it
+ * past this point (not clicking in time) is what busts them. Drawn through
+ * 1/(1-x), the standard crash-curve distribution — most bust points land low
+ * (1-3x), with a long tail that's uncapped (P(hit X or higher) ~ 1/X) rather
+ * than topping out at some fixed ceiling — a 1000x+ point is exponentially
+ * rarer than a 100x one, not impossible. MAX_CRASH_POINT only guards the
+ * float math at the extreme tail (the draw landing so close to 1 that
+ * 1/(1-x) would overflow toward Infinity), not a real gameplay cap.
  */
 const MAX_CRASH_POINT = 1e6;
 export function generateCrashPoint(seed) {
@@ -143,13 +143,13 @@ function resolveGame(duel, a, b, ctx) {
       return { verdict: da < db ? 1 : da > db ? -1 : 0, detail: { distA: da, distB: db } };
     }
     case "crash": {
-      // Picks are each player's own live result (0 = busted, kept out of the
-      // hands of a hidden server roll — see mountCrash in app.js): the
-      // multiplier they cashed out at, or 0 if they rode it past their own
-      // hidden bust point instead of stopping in time. Higher wins; busting
-      // means 0 goes straight into the payout gap below, same as any other
-      // result. Two busts is a wash — nothing to separate them on — so it
-      // redraws same as any other tie.
+      // Picks are each player's own live result on the one shared rocket
+      // (see mountCrash in app.js): the multiplier they cashed out at, or 0
+      // if they rode it past the shared hidden bust point instead of
+      // stopping in time. Higher wins; busting means 0 goes straight into
+      // the payout gap below, same as any other result. Both riding it past
+      // the bust point busts them at essentially the same instant — a wash,
+      // same as any other tie — so it redraws.
       const crashA = Number(a);
       const crashB = Number(b);
       if (crashA === crashB) return { verdict: 0, detail: { crashA, crashB } };
