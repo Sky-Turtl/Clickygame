@@ -3339,7 +3339,12 @@ function renderDuelModal() {
             : `${oppName} called it right — deciding whether to take it or go double or nothing.`;
       } else if (!iPicked) {
         resultEl.classList.add("hidden");
-        statusEl.textContent = theyPicked ? `${oppName} has moved. Your turn.` : "Make your move.";
+        // Crash is a blind race, not a turn order — each side plays their own
+        // hidden curve at the same time, so revealing that the other side has
+        // already cashed out (even without the value) would leak that they're
+        // now locked in and can't react further. Say nothing about them.
+        statusEl.textContent =
+          d.game === "crash" ? "Ride it or cash out — you won't see what they're doing." : theyPicked ? `${oppName} has moved. Your turn.` : "Make your move.";
       } else {
         resultEl.classList.add("hidden");
         statusEl.textContent = `Locked in. Waiting for ${oppName}…`;
