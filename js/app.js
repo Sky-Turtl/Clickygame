@@ -35,7 +35,7 @@ import { BUCKETS, bucketOHLC, claimRows, groupRuns, sortRows, suggestBucket } fr
 import { barChart, candleChart, leadArea, legend } from "./charts.js";
 import { buildExport, countdownToClaims, parseImport } from "./importer.js";
 import { mountGolf, mountGolfReplay } from "./golf.js";
-import { setForcedGame } from "./engine.js";
+import { setForcedGame, generateCrashPoint } from "./engine.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -1288,10 +1288,11 @@ function minigameDetailHtml(key, entries) {
     case "crash": {
       const runs = tracked.map((e) => mine(e, "crashA", "crashB")).filter((v) => Number.isFinite(v));
       if (!runs.length) return note || `<p class="mg-empty">No runs recorded.</p>`;
+      const cashed = runs.filter((v) => v > 0);
       return (
-        mgStat("Best run", `${Math.max(...runs).toFixed(2)}x`) +
-        mgStat("Average run", `${mean(runs).toFixed(2)}x`) +
-        mgStat("Instant busts", runs.filter((v) => v === 1).length) +
+        mgStat("Best cash-out", cashed.length ? `${Math.max(...cashed).toFixed(2)}x` : "—") +
+        mgStat("Average cash-out", cashed.length ? `${mean(cashed).toFixed(2)}x` : "—") +
+        mgStat("Times busted", runs.filter((v) => v === 0).length) +
         note
       );
     }
@@ -3183,6 +3184,10 @@ function renderDuelModal() {
               card._submitPick(distance, path);
             });
         }
+        if (d.game === "crash" && d.status === "open" && !iPicked) {
+          const mount = pickerEl.querySelector(".crash-mount");
+          if (mount) mountCrash(mount, d.id, d.round || 1, meId, (result) => card._submitPick(result));
+        }
       }
     }
 
@@ -3226,18 +3231,9 @@ function renderDuelModal() {
         playDiceRoll(resultEl);
       }
 
-      // Same idea for the rocket: climb for a beat before the settled
-      // multiplier lands.
-      if (isCrash && resultEl.dataset.crashSig !== resultSig) {
-        resultEl.dataset.crashSig = resultSig;
-        card.dataset.crashRevealAt = String(db.now() + CRASH_RUN_MS);
-        playCrash(resultEl);
-      }
-
       const stillFlipping = coinFace && card.dataset.coinRevealAt && db.now() < Number(card.dataset.coinRevealAt);
       const stillRolling = isDice && card.dataset.diceRevealAt && db.now() < Number(card.dataset.diceRevealAt);
-      const stillLaunching = isCrash && card.dataset.crashRevealAt && db.now() < Number(card.dataset.crashRevealAt);
-      const stillAnimating = stillFlipping || stillRolling || stillLaunching;
+      const stillAnimating = stillFlipping || stillRolling;
       statusEl.textContent = "";
 
       // While the coin/die is still animating, the pot stays on the "in
@@ -3389,7 +3385,7 @@ function pickerHtml(d, iPicked, meId) {
     case "dice":
       return `<button type="button" class="btn btn-primary duel-tap" data-pick="roll">🎲 Roll the die</button>`;
     case "crash":
-      return `<button type="button" class="btn btn-primary duel-tap" data-pick="launch">📈 Launch</button>`;
+      return `<div class="crash-mount"></div>`;
     case "reaction": {
       if (!d.goAt) {
         const iAmReady = !!d.reactionClear?.[meId];
@@ -3488,35 +3484,66 @@ function playDiceRoll(el) {
   setTimeout(() => clearInterval(interval), DICE_ROLL_MS);
 }
 
-const CRASH_RUN_MS = 1000;
+// Real-time-ms to double the multiplier — the knob for "how fast it climbs".
+// 1.00x -> 2.00x takes this long, 2x -> 4x takes the same again, and so on
+// (constant doubling time = exponential growth, same shape as an actual
+// crash game's curve rather than a flat linear climb).
+const CRASH_MS_PER_DOUBLE = 10000;
+const CRASH_GROWTH_K = Math.log(2) / CRASH_MS_PER_DOUBLE;
 const CRASH_TICK_MS = 60;
-let crashRunSeq = 0;
+
+function crashMultiplierAt(elapsedMs) {
+  return Math.exp(CRASH_GROWTH_K * elapsedMs);
+}
 
 /**
- * Animate a crash run into `el`: a multiplier climbs from 1.00x for
- * CRASH_RUN_MS, purely as a client-side reveal delay for suspense — the
- * actual crash point is already decided server-side. The caller (render)
- * rebuilds `el` with the settled result once card.dataset.crashRevealAt
- * elapses.
+ * Mounts a live crash widget into `container`: the multiplier climbs in real
+ * time from 1.00x and the player can hit "Cash out" whenever they like to
+ * lock in whatever it's showing. Ride it too long, though, and it busts —
+ * each player has their own hidden bust point (seeded off duel/round/player,
+ * same trick as every other duel's hidden randomness), so nobody can see
+ * their own ceiling coming. A bust reports 0, not the bust multiplier: this
+ * is a real cash-out game where the whole point of busting is that you get
+ * nothing, and 0 is what feeds the payout-gap math on the result screen.
+ *
+ * @param onDone called once with the final number (0 if busted).
  */
-function playCrash(el) {
-  const token = String(++crashRunSeq);
-  el.dataset.runToken = token;
-  el.innerHTML = `<div class="crash-flip-stage"><div class="crash-face climb">📈 1.00x</div></div>`;
-  const faceEl = el.querySelector(".crash-face");
+function mountCrash(container, duelId, round, playerId, onDone) {
+  const bustPoint = generateCrashPoint(`${duelId}|${playerId}|${round}|crash`);
+  const bustAtMs = Math.log(bustPoint) / CRASH_GROWTH_K;
+  const startedAt = performance.now();
+  let done = false;
 
-  const ticks = Math.round(CRASH_RUN_MS / CRASH_TICK_MS);
-  let tick = 0;
+  container.innerHTML = `
+    <div class="crash-live-stage"><div class="crash-live-face">📈 1.00x</div></div>
+    <button type="button" class="btn btn-primary duel-tap" data-crash-cashout>Cash out</button>`;
+  const faceEl = container.querySelector(".crash-live-face");
+  const btn = container.querySelector("[data-crash-cashout]");
+
+  function finish(result, busted) {
+    if (done) return;
+    done = true;
+    clearInterval(interval);
+    btn.disabled = true;
+    faceEl.textContent = busted ? "💥 Busted" : `📈 ${result.toFixed(2)}x`;
+    faceEl.classList.toggle("busted", busted);
+    onDone(result);
+  }
+
   const interval = setInterval(() => {
-    if (el.dataset.runToken !== token) return clearInterval(interval);
-    tick++;
-    // Ease toward a plausible mid-flight number — the eventual settle swaps
-    // in the real value, so this just needs to feel like it's climbing.
-    const shown = 1 + (tick / ticks) ** 2 * 4;
-    faceEl.textContent = `📈 ${shown.toFixed(2)}x`;
+    const elapsed = performance.now() - startedAt;
+    if (elapsed >= bustAtMs) {
+      finish(0, true);
+      return;
+    }
+    faceEl.textContent = `📈 ${crashMultiplierAt(elapsed).toFixed(2)}x`;
   }, CRASH_TICK_MS);
 
-  setTimeout(() => clearInterval(interval), CRASH_RUN_MS);
+  btn.addEventListener("click", () => {
+    if (done) return;
+    const elapsed = performance.now() - startedAt;
+    finish(Math.round(crashMultiplierAt(elapsed) * 100) / 100, false);
+  });
 }
 
 /** The "X vs Y" line on the result screen, tailored to whichever minigame decided it. */
@@ -3545,7 +3572,17 @@ function resultDetailHtml(d, meId, oppId, oppName) {
     case "crash": {
       const mine = mineIsChallenger ? detail.crashA : detail.crashB;
       const theirs = mineIsChallenger ? detail.crashB : detail.crashA;
-      return `📈 You hit ${mine.toFixed(2)}x · ${esc(oppName)} hit ${theirs.toFixed(2)}x`;
+      // The bust point is a pure function of (duel, player, round) — same
+      // seed the live widget used to decide when to bust it — so it can be
+      // recomputed here to reveal what each side's run was actually heading
+      // toward, win or bust.
+      const myBust = generateCrashPoint(`${d.id}|${meId}|${d.round || 1}|crash`);
+      const oppBust = generateCrashPoint(`${d.id}|${oppId}|${d.round || 1}|crash`);
+      const fmtC = (v, bust) =>
+        v === 0
+          ? `busted — it was heading to ${bust.toFixed(2)}x`
+          : `cashed out at ${v.toFixed(2)}x (was heading to ${bust.toFixed(2)}x)`;
+      return `📈 You ${fmtC(mine, myBust)} · ${esc(oppName)} ${fmtC(theirs, oppBust)}`;
     }
     case "golf": {
       const mine = mineIsChallenger ? detail.distA : detail.distB;
