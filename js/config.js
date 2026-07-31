@@ -78,3 +78,11 @@ export const DUEL_TIMEOUT_MS = 2 * 60 * 1000;
 // store, so the game is playable before Firebase is set up.
 export const isConfigured = () =>
   globalThis.CLICKY_DEMO === true || !String(firebaseConfig.apiKey).includes("PASTE_ME");
+
+// Bump this string on any deploy that changes client-side duel logic (seeded
+// randomness, growth curves, timing constants — anything two players'
+// browsers need to compute identically). Written into presence so a stale tab
+// still open from before a deploy can be flagged instead of silently playing
+// out a duel against a build that computes different numbers from the same
+// seed. Doesn't need to be a real version scheme, just needs to change.
+export const APP_VERSION = "2026-07-31.1";

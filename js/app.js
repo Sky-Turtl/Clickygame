@@ -1,6 +1,7 @@
 // Clicky — app shell, rendering, and the multi-game claim fan-out.
 
 import {
+  APP_VERSION,
   DUEL_TIMEOUT_MS,
   isConfigured,
   MIN_CLAIM_INTERVAL_MS,
@@ -1975,28 +1976,38 @@ function renderHub() {
   const note = $("claim-note");
   btn.classList.toggle("hot", anyHot && !blocked.length);
 
+  // Only an in-flight claim (`claiming`) actually disables the button via the
+  // real `disabled` attribute. The other states below are advisory — doClaim()
+  // already no-ops safely if tapped while cooling down or with nothing to
+  // claim — and are shown with `.soft-disabled` (same look, real clicks still
+  // land) instead. Toggling the real attribute here on a 200ms tick meant iOS
+  // would sometimes see the button as disabled for the instant a tap landed
+  // (e.g. right as a cooldown expired) and silently swallow that tap, forcing
+  // a second one.
+  btn.disabled = claiming;
+
   if (blocked.length) {
-    btn.disabled = false;
+    btn.classList.remove("soft-disabled");
     btn.querySelector(".btn-claim-text").textContent = "DUEL TO CONTINUE";
     $("btn-claim-sub").textContent = `${blocked.length} duel${blocked.length > 1 ? "s" : ""} waiting on you`;
     note.textContent = "Claiming is locked until you've made your move in the duel.";
   } else if (!targets.length && cooling.length) {
     // Nothing to claim into only because the cooldown is still running.
     const left = Math.max(...cooling.map(cooldownLeft));
-    btn.disabled = true;
+    btn.classList.add("soft-disabled");
     btn.classList.remove("hot");
     btn.querySelector(".btn-claim-text").textContent = (left / 1000).toFixed(1) + "s";
     $("btn-claim-sub").textContent = "cooling down";
     note.textContent = `You have to wait ${MIN_CLAIM_INTERVAL_MS / 1000}s between your own claims. Your opponent doesn't.`;
   } else if (!targets.length) {
-    btn.disabled = true;
+    btn.classList.add("soft-disabled");
     btn.querySelector(".btn-claim-text").textContent = "CLAIM";
     $("btn-claim-sub").textContent = syncedCount ? "" : "no games synced";
     note.textContent = syncedCount
       ? "Every synced game is finished or settling."
       : "Turn on sync for at least one game.";
   } else {
-    btn.disabled = claiming;
+    btn.classList.remove("soft-disabled");
     btn.querySelector(".btn-claim-text").textContent = "CLAIM";
     $("btn-claim-sub").textContent =
       targets.length > 1 ? `banks into ${targets.length} games` : "";
@@ -3073,6 +3084,7 @@ function renderDuelModal() {
           <h2>⚔️ Contested claim</h2>
           <p class="duel-game" data-el="game"></p>
           <p class="duel-minigame" data-el="minigame"></p>
+          <p class="modal-warn hidden" data-el="warn"></p>
           <p class="modal-sub" data-el="sub"></p>
           <div class="pot" data-el="pot"></div>
           <div class="duel-picker" data-el="picker"></div>
@@ -3165,6 +3177,20 @@ function renderDuelModal() {
     const iPicked = myPick !== undefined && myPick !== null;
     const theyPicked = oppPick !== undefined && oppPick !== null;
     const meta = DUEL_META[d.game] || DUEL_META.rps;
+
+    // Both sides need to be running matching code for a live duel — the
+    // number each client shows is computed locally from a shared seed
+    // (mountCrash's shared rocket, golf's putt physics, etc.), so a stale tab
+    // left open since before a deploy can silently compute a different result
+    // than its opponent's fresh one. Presence carries each player's build, so
+    // flag it rather than let that happen quietly.
+    const oppBuild = g.presence?.[oppId]?.build;
+    const buildMismatch = !resolved && !!oppBuild && oppBuild !== APP_VERSION;
+    const warnEl = el("warn");
+    warnEl.classList.toggle("hidden", !buildMismatch);
+    if (buildMismatch) {
+      warnEl.textContent = "⚠️ This game was updated since you loaded this page — refresh before playing, or you and your opponent may see different results.";
+    }
 
     el("game").textContent = gameLabel(g);
     el("minigame").textContent = `${meta.icon} ${meta.label}`;
