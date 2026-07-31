@@ -21,8 +21,8 @@ const BALL_R = 6;
 const SINK_R = 14;
 const OBSTACLE_R = 9;
 const MAX_PULL = 130;
-const SHOT_SPEED = 6; // lower = softer max-power shots, more forgiving on a touch drag
-const FRICTION = 0.972;
+const SHOT_SPEED = 8; // lower = softer max-power shots, more forgiving on a touch drag
+const FRICTION = 0.979;
 const STOP_SPEED = 0.12;
 const WALL_BOUNCE = 0.65; // energy kept off the side rails/obstacles, so it damps out rather than bouncing forever
 const MAX_FRAMES = 900; // ~15s safety cap so a stuck ball can't hang the modal forever
