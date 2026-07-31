@@ -349,6 +349,26 @@ export async function checkCrashStart(code, duelId, playerId) {
   return clone(game.state.duel);
 }
 
+export async function retryReactionStart(code, duelId) {
+  const game = g(code);
+  const started = applyStartReaction(game.state.duel, { duelId, at: now() });
+  if (started !== undefined) {
+    game.state = { ...game.state, duel: started };
+    emitAll(code);
+    scheduleBotThrow(code, duelId);
+  }
+}
+
+export async function retryCrashStart(code, duelId) {
+  const game = g(code);
+  const started = applyStartCrash(game.state.duel, { duelId, at: now() });
+  if (started !== undefined) {
+    game.state = { ...game.state, duel: started };
+    emitAll(code);
+    scheduleBotThrow(code, duelId);
+  }
+}
+
 export async function pingDuelActivity(code, duelId) {
   const game = g(code);
   const next = applyDuelActivity(game.state.duel, { duelId, at: now() });

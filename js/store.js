@@ -564,6 +564,25 @@ export async function checkCrashStart(code, duelId, playerId) {
   return duel;
 }
 
+/**
+ * Safety net for checkReactionStart/checkCrashStart's race: retries starting
+ * the round's clock with no ready-flag write of its own, just in case both
+ * players' own start-attempts landed before the other's flag had propagated.
+ * A no-op transaction (aborts via applyStart*'s own guards) if either side
+ * still isn't actually ready.
+ */
+export async function retryReactionStart(code, duelId) {
+  await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>
+    applyStartReaction(duel, { duelId, at: now() })
+  );
+}
+
+export async function retryCrashStart(code, duelId) {
+  await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>
+    applyStartCrash(duel, { duelId, at: now() })
+  );
+}
+
 /** A player interacted with the duel UI — pushes the 2-min timeout back out to a full window. */
 export async function pingDuelActivity(code, duelId) {
   await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>

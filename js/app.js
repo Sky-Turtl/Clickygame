@@ -1902,6 +1902,7 @@ function tick() {
   for (const g of games.values()) {
     checkWindows(g);
     checkDuelExpiry(g);
+    checkStalledDuelStart(g);
   }
   render();
 }
@@ -1942,6 +1943,28 @@ function checkDuelExpiry(g) {
   if (db.now() - startedAt < DUEL_TIMEOUT_MS) return;
 
   db.checkDuelTimeout(g.code, d.id);
+}
+
+/**
+ * Both reaction's "I'm ready" and crash's "Ready" gate their round's clock on
+ * both sides flagging in, and each side's own click races a follow-up
+ * transaction to actually start the clock once both flags are set. If both
+ * players click within the same instant, each one's follow-up can land
+ * before the *other* player's flag has propagated to the server — both
+ * flags end up true, but neither click's start-attempt ever saw both true at
+ * once, so the round never starts. This is the safety net: any client that
+ * notices both flags are in but the clock still isn't running retries the
+ * start on its own, no click required.
+ */
+function checkStalledDuelStart(g) {
+  const d = g.state?.duel;
+  if (!d || d.status !== "open") return;
+  if (d.game === "reaction" && !d.goAt && d.reactionClear?.[d.challenger] && d.reactionClear?.[d.defender]) {
+    db.retryReactionStart(g.code, d.id);
+  }
+  if (d.game === "crash" && !d.crashStartAt && d.crashReady?.[d.challenger] && d.crashReady?.[d.defender]) {
+    db.retryCrashStart(g.code, d.id);
+  }
 }
 
 function render() {
@@ -2773,9 +2796,11 @@ function duelTag(g, row) {
 
   const crashMultNote =
     row.game === "crash" && (row.mgDetail?.payoutMultiplier || 1) > 1
-      ? `<div class="gc-duel-tip-streak">Payout multiplier: ${row.mgDetail.payoutMultiplier.toFixed(2)}x (${fmtDuration(
+      ? `<div class="gc-duel-tip-streak">Payout multiplier: ${row.mgDetail.payoutMultiplier.toFixed(2)}x — ${fmtDuration(
           row.mgDetail.potSeconds || 0
-        )} pot)</div>`
+        )} pot × ${row.mgDetail.payoutMultiplier.toFixed(2)}x = ${fmtDuration(
+          (row.mgDetail.potSeconds || 0) * row.mgDetail.payoutMultiplier
+        )}</div>`
       : "";
 
   let doubleNote = "";
@@ -3062,14 +3087,23 @@ function openDuelModal() {
   renderDuelModal();
 }
 
-/** So the 2-min duel timeout doesn't fire while someone's visibly mid-action. */
+/**
+ * So the 2-min duel timeout doesn't fire while someone's visibly mid-action.
+ * Interacting with any one duel counts as "still here" for all of a
+ * player's other open duels too, so they all get their clocks pushed back.
+ */
 const lastActivityPing = new Map();
 function pingDuelActivity(code, duelId) {
-  const last = lastActivityPing.get(duelId) || 0;
   const t = Date.now();
-  if (t - last < 15000) return;
-  lastActivityPing.set(duelId, t);
-  db.pingDuelActivity(code, duelId);
+  const targets = new Map(allActiveDuels().map(({ g, duel: d }) => [d.id, { code: g.code, duelId: d.id, status: d.status }]));
+  targets.set(duelId, { code, duelId, status: targets.get(duelId)?.status });
+  for (const { code: c, duelId: id, status } of targets.values()) {
+    if (status && status !== "open" && status !== "double_offer") continue;
+    const last = lastActivityPing.get(id) || 0;
+    if (t - last < 15000) continue;
+    lastActivityPing.set(id, t);
+    db.pingDuelActivity(c, id);
+  }
 }
 
 function renderDuelModal() {
@@ -3356,7 +3390,9 @@ function renderDuelModal() {
             isCrash && (d.payoutMultiplier || 1) > 1
               ? `<div class="rr-detail">Payout multiplier: ${(d.payoutMultiplier || 1).toFixed(2)}x — ${fmtDuration(
                   d.potSeconds
-                )} pot × ${(d.payoutMultiplier || 1).toFixed(2)}x.</div>`
+                )} pot × ${(d.payoutMultiplier || 1).toFixed(2)}x = ${fmtDuration(
+                  d.potSeconds * (d.payoutMultiplier || 1)
+                )}.</div>`
               : ""
           }
           ${timeoutNote}
