@@ -3730,7 +3730,10 @@ function resultDetailHtml(d, meId, oppId, oppName) {
       // (duel, round), same seed the live widget used, so it can be
       // recomputed here rather than needing to be stored.
       const bust = generateCrashPoint(`${d.id}|${d.round || 1}|crash`);
-      const fmtC = (v) => (v === 0 ? "busted" : `cashed out at ${v.toFixed(2)}x`);
+      // A timed-out duel settles with no `detail` (see applyDuelTimeout in
+      // engine.js), so the side that never responded has no cash-out to show.
+      const fmtC = (v) =>
+        !Number.isFinite(v) ? "didn't respond in time" : v === 0 ? "busted" : `cashed out at ${v.toFixed(2)}x`;
       return `📈 You ${fmtC(mine)} · ${esc(oppName)} ${fmtC(theirs)} · it was heading to ${bust.toFixed(2)}x`;
     }
     case "golf": {
