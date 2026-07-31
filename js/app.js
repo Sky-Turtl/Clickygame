@@ -2773,9 +2773,11 @@ function duelTag(g, row) {
 
   const crashMultNote =
     row.game === "crash" && (row.mgDetail?.payoutMultiplier || 1) > 1
-      ? `<div class="gc-duel-tip-streak">Payout multiplier: ${row.mgDetail.payoutMultiplier.toFixed(2)}x (${fmtDuration(
+      ? `<div class="gc-duel-tip-streak">Payout multiplier: ${row.mgDetail.payoutMultiplier.toFixed(2)}x — ${fmtDuration(
           row.mgDetail.potSeconds || 0
-        )} pot)</div>`
+        )} pot × ${row.mgDetail.payoutMultiplier.toFixed(2)}x = ${fmtDuration(
+          (row.mgDetail.potSeconds || 0) * row.mgDetail.payoutMultiplier
+        )}</div>`
       : "";
 
   let doubleNote = "";
@@ -3365,7 +3367,9 @@ function renderDuelModal() {
             isCrash && (d.payoutMultiplier || 1) > 1
               ? `<div class="rr-detail">Payout multiplier: ${(d.payoutMultiplier || 1).toFixed(2)}x — ${fmtDuration(
                   d.potSeconds
-                )} pot × ${(d.payoutMultiplier || 1).toFixed(2)}x.</div>`
+                )} pot × ${(d.payoutMultiplier || 1).toFixed(2)}x = ${fmtDuration(
+                  d.potSeconds * (d.payoutMultiplier || 1)
+                )}.</div>`
               : ""
           }
           ${timeoutNote}
