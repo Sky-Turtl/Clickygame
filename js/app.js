@@ -3062,14 +3062,23 @@ function openDuelModal() {
   renderDuelModal();
 }
 
-/** So the 2-min duel timeout doesn't fire while someone's visibly mid-action. */
+/**
+ * So the 2-min duel timeout doesn't fire while someone's visibly mid-action.
+ * Interacting with any one duel counts as "still here" for all of a
+ * player's other open duels too, so they all get their clocks pushed back.
+ */
 const lastActivityPing = new Map();
 function pingDuelActivity(code, duelId) {
-  const last = lastActivityPing.get(duelId) || 0;
   const t = Date.now();
-  if (t - last < 15000) return;
-  lastActivityPing.set(duelId, t);
-  db.pingDuelActivity(code, duelId);
+  const targets = new Map(allActiveDuels().map(({ g, duel: d }) => [d.id, { code: g.code, duelId: d.id, status: d.status }]));
+  targets.set(duelId, { code, duelId, status: targets.get(duelId)?.status });
+  for (const { code: c, duelId: id, status } of targets.values()) {
+    if (status && status !== "open" && status !== "double_offer") continue;
+    const last = lastActivityPing.get(id) || 0;
+    if (t - last < 15000) continue;
+    lastActivityPing.set(id, t);
+    db.pingDuelActivity(c, id);
+  }
 }
 
 function renderDuelModal() {
