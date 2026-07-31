@@ -1902,6 +1902,7 @@ function tick() {
   for (const g of games.values()) {
     checkWindows(g);
     checkDuelExpiry(g);
+    checkStalledDuelStart(g);
   }
   render();
 }
@@ -1942,6 +1943,28 @@ function checkDuelExpiry(g) {
   if (db.now() - startedAt < DUEL_TIMEOUT_MS) return;
 
   db.checkDuelTimeout(g.code, d.id);
+}
+
+/**
+ * Both reaction's "I'm ready" and crash's "Ready" gate their round's clock on
+ * both sides flagging in, and each side's own click races a follow-up
+ * transaction to actually start the clock once both flags are set. If both
+ * players click within the same instant, each one's follow-up can land
+ * before the *other* player's flag has propagated to the server — both
+ * flags end up true, but neither click's start-attempt ever saw both true at
+ * once, so the round never starts. This is the safety net: any client that
+ * notices both flags are in but the clock still isn't running retries the
+ * start on its own, no click required.
+ */
+function checkStalledDuelStart(g) {
+  const d = g.state?.duel;
+  if (!d || d.status !== "open") return;
+  if (d.game === "reaction" && !d.goAt && d.reactionClear?.[d.challenger] && d.reactionClear?.[d.defender]) {
+    db.retryReactionStart(g.code, d.id);
+  }
+  if (d.game === "crash" && !d.crashStartAt && d.crashReady?.[d.challenger] && d.crashReady?.[d.defender]) {
+    db.retryCrashStart(g.code, d.id);
+  }
 }
 
 function render() {
