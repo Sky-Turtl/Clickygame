@@ -3186,7 +3186,8 @@ function renderDuelModal() {
         }
         if (d.game === "crash" && d.status === "open" && !iPicked) {
           const mount = pickerEl.querySelector(".crash-mount");
-          if (mount) mountCrash(mount, d.id, d.round || 1, meId, (result) => card._submitPick(result));
+          if (mount)
+            mountCrash(mount, d.id, d.round || 1, d.roundStartAt || d.createdAt, (result) => card._submitPick(result));
         }
       }
     }
@@ -3517,19 +3518,21 @@ function crashElapsedForMultiplier(m) {
 /**
  * Mounts a live crash widget into `container`: the multiplier climbs in real
  * time from 1.00x and the player can hit "Cash out" whenever they like to
- * lock in whatever it's showing. Ride it too long, though, and it busts —
- * each player has their own hidden bust point (seeded off duel/round/player,
- * same trick as every other duel's hidden randomness), so nobody can see
- * their own ceiling coming. A bust reports 0, not the bust multiplier: this
- * is a real cash-out game where the whole point of busting is that you get
+ * lock in whatever it's showing. It's one rocket, not two — both sides ride
+ * the exact same hidden bust point (seeded off duel/round only, no player
+ * component) on the exact same timeline (elapsed since `roundStartAt`, the
+ * duel's own synced clock reference — see engine.js — rather than each
+ * client's own local mount time), so it's a real shared race: cash out too
+ * early and you probably lose to whoever held their nerve longer, wait too
+ * long and you both bust at essentially the same instant. A bust reports 0,
+ * not the bust multiplier: the whole point of busting is that you get
  * nothing, and 0 is what feeds the payout-gap math on the result screen.
  *
  * @param onDone called once with the final number (0 if busted).
  */
-function mountCrash(container, duelId, round, playerId, onDone) {
-  const bustPoint = generateCrashPoint(`${duelId}|${playerId}|${round}|crash`);
+function mountCrash(container, duelId, round, roundStartAt, onDone) {
+  const bustPoint = generateCrashPoint(`${duelId}|${round}|crash`);
   const bustAtMs = crashElapsedForMultiplier(bustPoint);
-  const startedAt = performance.now();
   let done = false;
 
   container.innerHTML = `
@@ -3537,6 +3540,8 @@ function mountCrash(container, duelId, round, playerId, onDone) {
     <button type="button" class="btn btn-primary duel-tap" data-crash-cashout>Cash out</button>`;
   const faceEl = container.querySelector(".crash-live-face");
   const btn = container.querySelector("[data-crash-cashout]");
+
+  const elapsedNow = () => Math.max(0, db.now() - roundStartAt);
 
   function finish(result, busted) {
     if (done) return;
@@ -3549,7 +3554,7 @@ function mountCrash(container, duelId, round, playerId, onDone) {
   }
 
   const interval = setInterval(() => {
-    const elapsed = performance.now() - startedAt;
+    const elapsed = elapsedNow();
     if (elapsed >= bustAtMs) {
       finish(0, true);
       return;
@@ -3559,8 +3564,7 @@ function mountCrash(container, duelId, round, playerId, onDone) {
 
   btn.addEventListener("click", () => {
     if (done) return;
-    const elapsed = performance.now() - startedAt;
-    finish(Math.round(crashMultiplierAt(elapsed) * 100) / 100, false);
+    finish(Math.round(crashMultiplierAt(elapsedNow()) * 100) / 100, false);
   });
 }
 
@@ -3590,17 +3594,12 @@ function resultDetailHtml(d, meId, oppId, oppName) {
     case "crash": {
       const mine = mineIsChallenger ? detail.crashA : detail.crashB;
       const theirs = mineIsChallenger ? detail.crashB : detail.crashA;
-      // The bust point is a pure function of (duel, player, round) — same
-      // seed the live widget used to decide when to bust it — so it can be
-      // recomputed here to reveal what each side's run was actually heading
-      // toward, win or bust.
-      const myBust = generateCrashPoint(`${d.id}|${meId}|${d.round || 1}|crash`);
-      const oppBust = generateCrashPoint(`${d.id}|${oppId}|${d.round || 1}|crash`);
-      const fmtC = (v, bust) =>
-        v === 0
-          ? `busted — it was heading to ${bust.toFixed(2)}x`
-          : `cashed out at ${v.toFixed(2)}x (was heading to ${bust.toFixed(2)}x)`;
-      return `📈 You ${fmtC(mine, myBust)} · ${esc(oppName)} ${fmtC(theirs, oppBust)}`;
+      // One shared rocket, one shared bust point — a pure function of
+      // (duel, round), same seed the live widget used, so it can be
+      // recomputed here rather than needing to be stored.
+      const bust = generateCrashPoint(`${d.id}|${d.round || 1}|crash`);
+      const fmtC = (v) => (v === 0 ? "busted" : `cashed out at ${v.toFixed(2)}x`);
+      return `📈 You ${fmtC(mine)} · ${esc(oppName)} ${fmtC(theirs)} · it was heading to ${bust.toFixed(2)}x`;
     }
     case "golf": {
       const mine = mineIsChallenger ? detail.distA : detail.distB;
