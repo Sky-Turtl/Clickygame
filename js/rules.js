@@ -132,7 +132,7 @@ export const DUEL_META = {
     label: "Crash",
     icon: "📈",
     color: "#ff8a3d",
-    rule: "Launch your rocket — it climbs until it busts. Higher multiplier wins, and the bigger the gap the more you take home. Both bust and it's a redraw.",
+    rule: "Watch it climb and cash out whenever you want — wait too long and it busts, worth nothing. Higher cash-out wins, and the bigger the gap the more you take home. Both bust and it's a redraw.",
   },
 };
 

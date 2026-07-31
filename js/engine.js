@@ -46,18 +46,20 @@ function pickGame(duelId) {
 }
 
 /**
- * One player's crash-game run: an exchange multiplier that grows from 1.00x
- * and busts at a random point, shaped like a real crash game rather than a
- * flat random number. A small slice of runs bust instantly at 1.00x; the
- * rest are drawn through 1/(1-x), the standard crash-curve distribution —
- * most land low (1-3x), with a long tail that's uncapped (P(hit X or higher)
- * ~ 1/X) rather than topping out at some fixed ceiling — a 1000x+ run is
- * exponentially rarer than a 100x one, not impossible. MAX_CRASH_POINT only
- * guards the float math at the extreme tail (remapped landing so close to 1
- * that 1/(1-remapped) would overflow toward Infinity), not a real gameplay cap.
+ * The hidden multiplier at which one player's own crash run would bust —
+ * played out live in the rocket widget (see mountCrash in app.js), which
+ * climbs in real time and lets that player cash out whenever they like.
+ * Riding it past this point (not clicking in time) is what busts them.
+ * Drawn through 1/(1-x), the standard crash-curve distribution — most bust
+ * points land low (1-3x), with a long tail that's uncapped (P(hit X or
+ * higher) ~ 1/X) rather than topping out at some fixed ceiling — a 1000x+
+ * point is exponentially rarer than a 100x one, not impossible.
+ * MAX_CRASH_POINT only guards the float math at the extreme tail (the draw
+ * landing so close to 1 that 1/(1-x) would overflow toward Infinity), not a
+ * real gameplay cap.
  */
 const MAX_CRASH_POINT = 1e6;
-function generateCrashPoint(seed) {
+export function generateCrashPoint(seed) {
   const u = seededFloat(seed);
   const INSTANT_BUST_CHANCE = 0.04;
   if (u < INSTANT_BUST_CHANCE) return 1;
@@ -141,11 +143,15 @@ function resolveGame(duel, a, b, ctx) {
       return { verdict: da < db ? 1 : da > db ? -1 : 0, detail: { distA: da, distB: db } };
     }
     case "crash": {
-      // Each side runs their own crash curve; higher surviving multiplier
-      // wins. Two instant busts at 1.00x is a wash — nothing to separate
-      // them on — so it redraws same as any other tie.
-      const crashA = generateCrashPoint(`${duel.id}|${duel.challenger}|${ctx.at}|crash`);
-      const crashB = generateCrashPoint(`${duel.id}|${duel.defender}|${ctx.at}|crash`);
+      // Picks are each player's own live result (0 = busted, kept out of the
+      // hands of a hidden server roll — see mountCrash in app.js): the
+      // multiplier they cashed out at, or 0 if they rode it past their own
+      // hidden bust point instead of stopping in time. Higher wins; busting
+      // means 0 goes straight into the payout gap below, same as any other
+      // result. Two busts is a wash — nothing to separate them on — so it
+      // redraws same as any other tie.
+      const crashA = Number(a);
+      const crashB = Number(b);
       if (crashA === crashB) return { verdict: 0, detail: { crashA, crashB } };
       return { verdict: crashA > crashB ? 1 : -1, detail: { crashA, crashB } };
     }

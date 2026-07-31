@@ -1137,11 +1137,15 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-
 
 .crash-flip-stage { display: flex; justify-content: center; margin: 4px 0 10px; }
 .crash-face { font-size: 28px; font-weight: 700; line-height: 1; display: inline-block; color: var(--green); }
-.crash-face.climb { animation: crash-shake 0.06s linear infinite; }
-@keyframes crash-shake {
-  0% { transform: translateY(0); }
-  50% { transform: translateY(-1px); }
-  100% { transform: translateY(0); }
+
+.crash-mount { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.crash-live-stage { display: flex; justify-content: center; margin: 4px 0; }
+.crash-live-face { font-size: 32px; font-weight: 700; line-height: 1; display: inline-block; color: var(--green); font-variant-numeric: tabular-nums; }
+.crash-live-face.busted { color: var(--red); animation: crash-bust-shake 0.3s ease; }
+@keyframes crash-bust-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-4px); }
+  75% { transform: translateX(4px); }
 }
 
 .rps-result { text-align: center; margin-top: 16px; }

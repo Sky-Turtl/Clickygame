@@ -15,6 +15,7 @@ import {
   applySettle,
   applyStartReaction,
   applyThrow,
+  generateCrashPoint,
   getForcedGame,
 } from "../js/engine.js";
 
@@ -455,8 +456,14 @@ function botPickFor(duel) {
       return Math.random() < 0.5 ? "heads" : "tails";
     case "dice":
       return true; // no real "choice" for this one — just needs to be present
-    case "crash":
-      return true; // ditto — the crash point is computed server-side from the seed
+    case "crash": {
+      // Mimics a player aiming for a modest 1.5x-3.5x cash-out: takes it if
+      // its own hidden bust point (same seed the live widget would use)
+      // clears the target, busts (0) otherwise.
+      const bust = generateCrashPoint(`${duel.id}|${BOT}|${duel.round || 1}|crash`);
+      const target = Math.round((1.5 + Math.random() * 2) * 100) / 100;
+      return bust > target ? target : 0;
+    }
     case "golf":
       return 0; // always sinks — forces ties/replays so obstacle rounds are easy to test
     default: {
