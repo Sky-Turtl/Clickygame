@@ -3484,16 +3484,29 @@ function playDiceRoll(el) {
   setTimeout(() => clearInterval(interval), DICE_ROLL_MS);
 }
 
-// Real-time-ms to double the multiplier — the knob for "how fast it climbs".
-// 1.00x -> 2.00x takes this long, 2x -> 4x takes the same again, and so on
-// (constant doubling time = exponential growth, same shape as an actual
-// crash game's curve rather than a flat linear climb).
+// The climb isn't a flat exponential — its own rate ramps up over time, so
+// the run opens gently (CRASH_MS_PER_DOUBLE: real-time ms to double at the
+// very start) and keeps accelerating from there rather than holding that
+// same pace forever. CRASH_RAMP_MS is how long it takes the instantaneous
+// growth rate to double: rate(t) = k0 * (1 + t/CRASH_RAMP_MS), integrated to
+// log(multiplier) = k0*t + (k0/(2*CRASH_RAMP_MS))*t^2 — a closed form (and
+// its inverse, below) rather than a numerically-stepped simulation.
 const CRASH_MS_PER_DOUBLE = 10000;
-const CRASH_GROWTH_K = Math.log(2) / CRASH_MS_PER_DOUBLE;
+const CRASH_K0 = Math.log(2) / CRASH_MS_PER_DOUBLE;
+const CRASH_RAMP_MS = 20000;
 const CRASH_TICK_MS = 60;
 
 function crashMultiplierAt(elapsedMs) {
-  return Math.exp(CRASH_GROWTH_K * elapsedMs);
+  return Math.exp(CRASH_K0 * elapsedMs + (CRASH_K0 / (2 * CRASH_RAMP_MS)) * elapsedMs * elapsedMs);
+}
+
+/** Inverse of crashMultiplierAt: how long (ms) until the climb reaches `m`. */
+function crashElapsedForMultiplier(m) {
+  const targetLog = Math.log(m);
+  const a = CRASH_K0 / (2 * CRASH_RAMP_MS);
+  const b = CRASH_K0;
+  const c = -targetLog;
+  return (-b + Math.sqrt(b * b - 4 * a * c)) / (2 * a);
 }
 
 /**
@@ -3510,7 +3523,7 @@ function crashMultiplierAt(elapsedMs) {
  */
 function mountCrash(container, duelId, round, playerId, onDone) {
   const bustPoint = generateCrashPoint(`${duelId}|${playerId}|${round}|crash`);
-  const bustAtMs = Math.log(bustPoint) / CRASH_GROWTH_K;
+  const bustAtMs = crashElapsedForMultiplier(bustPoint);
   const startedAt = performance.now();
   let done = false;
 
