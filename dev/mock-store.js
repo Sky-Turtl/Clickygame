@@ -455,6 +455,8 @@ function botPickFor(duel) {
       return Math.random() < 0.5 ? "heads" : "tails";
     case "dice":
       return true; // no real "choice" for this one — just needs to be present
+    case "crash":
+      return true; // ditto — the crash point is computed server-side from the seed
     case "golf":
       return 0; // always sinks — forces ties/replays so obstacle rounds are easy to test
     default: {

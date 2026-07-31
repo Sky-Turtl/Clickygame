@@ -1135,6 +1135,15 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-
   100% { transform: rotate(720deg) scale(1); }
 }
 
+.crash-flip-stage { display: flex; justify-content: center; margin: 4px 0 10px; }
+.crash-face { font-size: 28px; font-weight: 700; line-height: 1; display: inline-block; color: var(--green); }
+.crash-face.climb { animation: crash-shake 0.06s linear infinite; }
+@keyframes crash-shake {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(-1px); }
+  100% { transform: translateY(0); }
+}
+
 .rps-result { text-align: center; margin-top: 16px; }
 .rps-result .rr-throws { font-size: 20px; line-height: 1.4; }
 .rps-result .rr-verdict { font-size: 17px; font-weight: 700; margin-top: 8px; }
