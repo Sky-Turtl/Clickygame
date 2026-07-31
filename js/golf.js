@@ -20,7 +20,7 @@ const HOLE_R = 12; // lenient — a rolling ball that clips the cup counts
 const BALL_R = 6;
 const SINK_R = 14;
 const OBSTACLE_R = 9;
-const MAX_PULL = 80;
+const MAX_PULL = 130;
 const SHOT_SPEED = 6; // lower = softer max-power shots, more forgiving on a touch drag
 const FRICTION = 0.972;
 const STOP_SPEED = 0.12;
