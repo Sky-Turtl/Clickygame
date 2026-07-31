@@ -49,11 +49,13 @@ import { APP_VERSION, DUEL_TIMEOUT_MS, firebaseConfig, MIN_CLAIM_INTERVAL_MS, RE
 import { multiplierAt } from "./rules.js";
 import {
   applyClaim,
+  applyCrashReady,
   applyDoubleChoice,
   applyDuelActivity,
   applyDuelTimeout,
   applyReactionClear,
   applySettle,
+  applyStartCrash,
   applyStartReaction,
   applyThrow,
 } from "./engine.js";
@@ -540,6 +542,25 @@ export async function checkReactionStart(code, duelId, playerId, iAmClear) {
     applyStartReaction(duel, { duelId, at: now() })
   );
   const duel = (startResult.committed ? startResult.snapshot.val() : clearResult.snapshot.val()) || null;
+  return duel;
+}
+
+/**
+ * A player clicked "Ready" on a crash duel. Reports their side ready,
+ * then — if that makes both sides ready — starts the shared rocket's clock.
+ *
+ * @returns the committed duel (whether or not it actually started), or null.
+ */
+export async function checkCrashStart(code, duelId, playerId) {
+  const readyResult = await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>
+    applyCrashReady(duel, { duelId, playerId })
+  );
+  if (!readyResult.committed) return null;
+
+  const startResult = await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>
+    applyStartCrash(duel, { duelId, at: now() })
+  );
+  const duel = (startResult.committed ? startResult.snapshot.val() : readyResult.snapshot.val()) || null;
   return duel;
 }
 

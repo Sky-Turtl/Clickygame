@@ -1916,6 +1916,15 @@ async function markReactionReady(code, duelId, playerId) {
 }
 
 /**
+ * A player clicked "Ready" on a crash duel. Reports their side ready and, if
+ * that makes both sides ready, starts the shared rocket's clock (see
+ * engine.applyCrashReady/applyStartCrash, driven by db.checkCrashStart).
+ */
+async function markCrashReady(code, duelId, playerId) {
+  await db.checkCrashStart(code, duelId, playerId);
+}
+
+/**
  * Every client with the game open races to notice a stale duel — the
  * transaction inside checkDuelTimeout guarantees only one of them actually
  * writes the result. Cheap local pre-check first so an unexpired duel doesn't
@@ -2762,6 +2771,13 @@ function duelTag(g, row) {
 
   const tieNote = row.ties ? `<div class="gc-duel-tip-streak">${row.ties} redraw${row.ties === 1 ? "" : "s"} first</div>` : "";
 
+  const crashMultNote =
+    row.game === "crash" && (row.mgDetail?.payoutMultiplier || 1) > 1
+      ? `<div class="gc-duel-tip-streak">Payout multiplier: ${row.mgDetail.payoutMultiplier.toFixed(2)}x (${fmtDuration(
+          row.mgDetail.potSeconds || 0
+        )} pot)</div>`
+      : "";
+
   let doubleNote = "";
   if (row.mgDetail?.doubled && !row.mgDetail?.potLost) {
     const doublerName = row.mgDetail.doubler === meId ? "You" : g.players?.[row.mgDetail.doubler]?.name || "They";
@@ -2774,6 +2790,7 @@ function duelTag(g, row) {
       <div class="gc-duel-tip-record">${verdict}</div>
       ${detailLine}
       ${doubleNote}
+      ${crashMultNote}
       ${tieNote}
     </div>
   </span>`;
@@ -3144,6 +3161,15 @@ function renderDuelModal() {
           markReactionReady(g.code, curDuel.id, myId(g)).then(render);
           return;
         }
+        const crashReadyBtn = e.target.closest("[data-crash-ready]");
+        if (crashReadyBtn) {
+          const cur = games.get(g.code);
+          const curDuel = cur?.state?.duel;
+          if (!curDuel || curDuel.id !== d.id) return;
+          crashReadyBtn.disabled = true;
+          markCrashReady(g.code, curDuel.id, myId(g)).then(render);
+          return;
+        }
         const btn = e.target.closest("[data-pick]");
         if (!btn || btn.disabled) return;
         const kind = btn.dataset.pick;
@@ -3210,7 +3236,11 @@ function renderDuelModal() {
     pickerEl.classList.toggle("hidden", resolved);
     if (!resolved) {
       const sig = `${d.status}|${d.game}|${d.round}|${iPicked}|${
-        d.game === "reaction" ? `${db.now() >= d.goAt}|${!!d.reactionClear?.[meId]}` : ""
+        d.game === "reaction"
+          ? `${db.now() >= d.goAt}|${!!d.reactionClear?.[meId]}`
+          : d.game === "crash"
+            ? `${!!d.crashStartAt}|${!!d.crashReady?.[meId]}`
+            : ""
       }`;
       if (pickerEl.dataset.sig !== sig) {
         pickerEl.dataset.sig = sig;
@@ -3222,10 +3252,10 @@ function renderDuelModal() {
               card._submitPick(distance, path);
             });
         }
-        if (d.game === "crash" && d.status === "open" && !iPicked) {
+        if (d.game === "crash" && d.status === "open" && !iPicked && d.crashStartAt) {
           const mount = pickerEl.querySelector(".crash-mount");
           if (mount)
-            mountCrash(mount, d.id, d.round || 1, d.roundStartAt || d.createdAt, (result) => card._submitPick(result));
+            mountCrash(mount, d.id, d.round || 1, d.crashStartAt, (result) => card._submitPick(result));
         }
       }
     }
@@ -3322,6 +3352,13 @@ function renderDuelModal() {
               ? `${fmtDuration(d.potSeconds * (d.payoutMultiplier || 1))} banked. ${esc(oppName)} gets nothing.`
               : `${esc(oppName)} takes ${fmtDuration(d.potSeconds * (d.payoutMultiplier || 1))}.`
           }</div>
+          ${
+            isCrash && (d.payoutMultiplier || 1) > 1
+              ? `<div class="rr-detail">Payout multiplier: ${(d.payoutMultiplier || 1).toFixed(2)}x — ${fmtDuration(
+                  d.potSeconds
+                )} pot × ${(d.payoutMultiplier || 1).toFixed(2)}x.</div>`
+              : ""
+          }
           ${timeoutNote}
           ${doubleNote}
           ${golfReplayHtml}`;
@@ -3428,8 +3465,15 @@ function pickerHtml(d, iPicked, meId) {
       </div>`;
     case "dice":
       return `<button type="button" class="btn btn-primary duel-tap" data-pick="roll">🎲 Roll the die</button>`;
-    case "crash":
+    case "crash": {
+      if (!d.crashStartAt) {
+        const iAmReady = !!d.crashReady?.[meId];
+        return iAmReady
+          ? `<div class="duel-locked">Ready. Waiting for the other side…</div>`
+          : `<button type="button" class="btn btn-primary duel-tap" data-crash-ready>Ready</button>`;
+      }
       return `<div class="crash-mount"></div>`;
+    }
     case "reaction": {
       if (!d.goAt) {
         const iAmReady = !!d.reactionClear?.[meId];

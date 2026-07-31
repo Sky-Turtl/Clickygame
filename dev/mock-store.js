@@ -8,11 +8,13 @@ import { APP_VERSION, DUEL_TIMEOUT_MS, TIE_WINDOW_MS } from "../js/config.js";
 import { multiplierAt } from "../js/rules.js";
 import {
   applyClaim,
+  applyCrashReady,
   applyDoubleChoice,
   applyDuelActivity,
   applyDuelTimeout,
   applyReactionClear,
   applySettle,
+  applyStartCrash,
   applyStartReaction,
   applyThrow,
   generateCrashPoint,
@@ -331,6 +333,22 @@ export async function checkReactionStart(code, duelId, playerId, iAmClear) {
   return clone(game.state.duel);
 }
 
+export async function checkCrashStart(code, duelId, playerId) {
+  const game = g(code);
+  const readied = applyCrashReady(game.state.duel, { duelId, playerId });
+  if (readied !== undefined) game.state = { ...game.state, duel: readied };
+
+  const started = applyStartCrash(game.state.duel, { duelId, at: now() });
+  if (started !== undefined) {
+    game.state = { ...game.state, duel: started };
+    emitAll(code);
+    scheduleBotThrow(code, duelId);
+  } else if (readied !== undefined) {
+    emitAll(code);
+  }
+  return clone(game.state.duel);
+}
+
 export async function pingDuelActivity(code, duelId) {
   const game = g(code);
   const next = applyDuelActivity(game.state.duel, { duelId, at: now() });
@@ -495,6 +513,14 @@ function scheduleBotThrow(code, duelId) {
       if ((cur.picks || {})[BOT] !== undefined) return;
       submitThrow(code, duelId, BOT, now());
     }, wait);
+    return;
+  }
+
+  // Crash is likewise gated on both sides being ready before its shared
+  // rocket starts climbing — the bot only ever plays one duel at a time, so
+  // it's always ready to report in.
+  if (duel.game === "crash" && !duel.crashStartAt) {
+    checkCrashStart(code, duelId, BOT);
     return;
   }
 
