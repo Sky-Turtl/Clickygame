@@ -14,7 +14,6 @@ import {
   applyDuelTimeout,
   applyReactionClear,
   applySettle,
-  applyStartCrash,
   applyStartReaction,
   applyThrow,
   generateCrashPoint,
@@ -335,16 +334,11 @@ export async function checkReactionStart(code, duelId, playerId, iAmClear) {
 
 export async function checkCrashStart(code, duelId, playerId) {
   const game = g(code);
-  const readied = applyCrashReady(game.state.duel, { duelId, playerId });
-  if (readied !== undefined) game.state = { ...game.state, duel: readied };
-
-  const started = applyStartCrash(game.state.duel, { duelId, at: now() });
-  if (started !== undefined) {
-    game.state = { ...game.state, duel: started };
+  const readied = applyCrashReady(game.state.duel, { duelId, playerId, at: now() });
+  if (readied !== undefined) {
+    game.state = { ...game.state, duel: readied };
     emitAll(code);
     scheduleBotThrow(code, duelId);
-  } else if (readied !== undefined) {
-    emitAll(code);
   }
   return clone(game.state.duel);
 }
@@ -352,16 +346,6 @@ export async function checkCrashStart(code, duelId, playerId) {
 export async function retryReactionStart(code, duelId) {
   const game = g(code);
   const started = applyStartReaction(game.state.duel, { duelId, at: now() });
-  if (started !== undefined) {
-    game.state = { ...game.state, duel: started };
-    emitAll(code);
-    scheduleBotThrow(code, duelId);
-  }
-}
-
-export async function retryCrashStart(code, duelId) {
-  const game = g(code);
-  const started = applyStartCrash(game.state.duel, { duelId, at: now() });
   if (started !== undefined) {
     game.state = { ...game.state, duel: started };
     emitAll(code);
@@ -536,10 +520,9 @@ function scheduleBotThrow(code, duelId) {
     return;
   }
 
-  // Crash is likewise gated on both sides being ready before its shared
-  // rocket starts climbing — the bot only ever plays one duel at a time, so
-  // it's always ready to report in.
-  if (duel.game === "crash" && !duel.crashStartAt) {
+  // Crash starts each side independently — the bot readies up for its own
+  // rocket as soon as it's free to play this duel.
+  if (duel.game === "crash" && !duel.crashStartAt?.[BOT]) {
     checkCrashStart(code, duelId, BOT);
     return;
   }

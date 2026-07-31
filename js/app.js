@@ -1917,9 +1917,8 @@ async function markReactionReady(code, duelId, playerId) {
 }
 
 /**
- * A player clicked "Ready" on a crash duel. Reports their side ready and, if
- * that makes both sides ready, starts the shared rocket's clock (see
- * engine.applyCrashReady/applyStartCrash, driven by db.checkCrashStart).
+ * A player clicked "Ready" on a crash duel — starts their own rocket's clock
+ * immediately (see engine.applyCrashReady, driven by db.checkCrashStart).
  */
 async function markCrashReady(code, duelId, playerId) {
   await db.checkCrashStart(code, duelId, playerId);
@@ -1946,24 +1945,23 @@ function checkDuelExpiry(g) {
 }
 
 /**
- * Both reaction's "I'm ready" and crash's "Ready" gate their round's clock on
- * both sides flagging in, and each side's own click races a follow-up
- * transaction to actually start the clock once both flags are set. If both
- * players click within the same instant, each one's follow-up can land
- * before the *other* player's flag has propagated to the server — both
- * flags end up true, but neither click's start-attempt ever saw both true at
- * once, so the round never starts. This is the safety net: any client that
- * notices both flags are in but the clock still isn't running retries the
- * start on its own, no click required.
+ * Reaction's "I'm ready" gates the round's clock on both sides flagging in,
+ * and each side's own click races a follow-up transaction to actually start
+ * the clock once both flags are set. If both players click within the same
+ * instant, each one's follow-up can land before the *other* player's flag has
+ * propagated to the server — both flags end up true, but neither click's
+ * start-attempt ever saw both true at once, so the round never starts. This
+ * is the safety net: any client that notices both flags are in but the clock
+ * still isn't running retries the start on its own, no click required.
+ *
+ * Crash doesn't need this — each side starts their own rocket independently,
+ * so there's no "both sides" race to get stuck on.
  */
 function checkStalledDuelStart(g) {
   const d = g.state?.duel;
   if (!d || d.status !== "open") return;
   if (d.game === "reaction" && !d.goAt && d.reactionClear?.[d.challenger] && d.reactionClear?.[d.defender]) {
     db.retryReactionStart(g.code, d.id);
-  }
-  if (d.game === "crash" && !d.crashStartAt && d.crashReady?.[d.challenger] && d.crashReady?.[d.defender]) {
-    db.retryCrashStart(g.code, d.id);
   }
 }
 
@@ -3273,7 +3271,7 @@ function renderDuelModal() {
         d.game === "reaction"
           ? `${db.now() >= d.goAt}|${!!d.reactionClear?.[meId]}`
           : d.game === "crash"
-            ? `${!!d.crashStartAt}|${!!d.crashReady?.[meId]}`
+            ? `${!!d.crashStartAt?.[meId]}`
             : ""
       }`;
       if (pickerEl.dataset.sig !== sig) {
@@ -3286,10 +3284,10 @@ function renderDuelModal() {
               card._submitPick(distance, path);
             });
         }
-        if (d.game === "crash" && d.status === "open" && !iPicked && d.crashStartAt) {
+        if (d.game === "crash" && d.status === "open" && !iPicked && d.crashStartAt?.[meId]) {
           const mount = pickerEl.querySelector(".crash-mount");
           if (mount)
-            mountCrash(mount, d.id, d.round || 1, d.crashStartAt, (result) => card._submitPick(result));
+            mountCrash(mount, d.id, d.round || 1, d.crashStartAt[meId], (result) => card._submitPick(result));
         }
       }
     }
@@ -3502,11 +3500,8 @@ function pickerHtml(d, iPicked, meId) {
     case "dice":
       return `<button type="button" class="btn btn-primary duel-tap" data-pick="roll">🎲 Roll the die</button>`;
     case "crash": {
-      if (!d.crashStartAt) {
-        const iAmReady = !!d.crashReady?.[meId];
-        return iAmReady
-          ? `<div class="duel-locked">Ready. Waiting for the other side…</div>`
-          : `<button type="button" class="btn btn-primary duel-tap" data-crash-ready>Ready</button>`;
+      if (!d.crashStartAt?.[meId]) {
+        return `<button type="button" class="btn btn-primary duel-tap" data-crash-ready>Ready</button>`;
       }
       return `<div class="crash-mount"></div>`;
     }
