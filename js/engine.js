@@ -93,6 +93,16 @@ function reactionDelay(duelId, round) {
 }
 
 /**
+ * Small buffer before a crash round's rocket actually starts climbing, same
+ * idea as reactionDelay: gives every client's "both ready" update time to
+ * arrive over the network before the clock they're all reading from starts
+ * moving, so nobody's rocket is already behind by the time it mounts.
+ */
+function crashStartDelay(duelId, round) {
+  return 900 + Math.round(600 * seededFloat(`${duelId}|${round}|crashDelay`));
+}
+
+/**
  * Decide a settled round. `a`/`b` are the challenger's/defender's picks.
  * @returns { verdict, detail } — verdict is 1 (challenger), -1 (defender), or
  *          0 (draw, play again); detail is extra info for the result screen.
@@ -535,7 +545,7 @@ export function applyStartCrash(duel, ctx) {
   if (duel.game !== "crash" || duel.crashStartAt) return undefined;
   const ready = duel.crashReady || {};
   if (!ready[duel.challenger] || !ready[duel.defender]) return undefined;
-  return { ...duel, crashStartAt: ctx.at };
+  return { ...duel, crashStartAt: ctx.at + crashStartDelay(duel.id, duel.round || 1) };
 }
 
 /** A player interacted with the duel UI (typed, dragged, tapped) — pushes the timeout back out. */
