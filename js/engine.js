@@ -383,6 +383,15 @@ export function applyDoubleChoice(duel, ctx) {
  */
 export function applyThrow(duel, { duelId, playerId, choice, path }) {
   if (!duel || duel.id !== duelId || duel.status !== "open") return undefined;
+  // A stale client (loaded before the ready-up gate shipped, or otherwise
+  // out of sync) has no "Ready" button to hold it back, so it could submit a
+  // pick before the round has actually started — crash's clock hasn't begun
+  // (no crashStartAt) or reaction's "go" moment hasn't fired (no goAt). Reject
+  // it here so the round can't get stuck waiting on a ready flag that a throw
+  // has already bypassed (see the "still open" checkStalledDuelStart/
+  // checkDuelTimeout guards, which both refuse to touch an un-started round).
+  if (duel.game === "crash" && !duel.crashStartAt) return undefined;
+  if (duel.game === "reaction" && !duel.goAt) return undefined;
   const next = { ...duel, picks: { ...(duel.picks || {}), [playerId]: choice } };
   if (duel.game === "golf" && path) {
     next.golfPaths = { ...(duel.golfPaths || {}), [playerId]: path };
