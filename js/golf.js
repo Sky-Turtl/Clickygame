@@ -21,9 +21,9 @@ const BALL_R = 6;
 const SINK_R = 14;
 const OBSTACLE_R = 9;
 const MAX_PULL = 80;
-const SHOT_SPEED = 4.5; // lower = softer max-power shots, more forgiving on a touch drag
-const FRICTION = 0.985;
-const STOP_SPEED = 0.06;
+const SHOT_SPEED = 6; // lower = softer max-power shots, more forgiving on a touch drag
+const FRICTION = 0.972;
+const STOP_SPEED = 0.12;
 const WALL_BOUNCE = 0.65; // energy kept off the side rails/obstacles, so it damps out rather than bouncing forever
 const MAX_FRAMES = 900; // ~15s safety cap so a stuck ball can't hang the modal forever
 
@@ -117,7 +117,6 @@ export function mountGolf(container, seed, round, onDone) {
   const actions = document.createElement("div");
   actions.className = "golf-actions hidden";
   actions.innerHTML = `
-    <button type="button" class="btn btn-ghost" data-golf="reaim">Re-aim</button>
     <button type="button" class="btn btn-primary" data-golf="putt">Putt</button>`;
   container.appendChild(actions);
 
@@ -147,13 +146,22 @@ export function mountGolf(container, seed, round, onDone) {
       ctx.fill();
     }
     if ((dragging || pending) && dragTo) {
-      const pullPower = Math.hypot(dragTo.x - ball.x, dragTo.y - ball.y) / MAX_PULL;
-      ctx.strokeStyle = "rgba(255,255,255,.55)";
-      ctx.lineWidth = 2 + pullPower * 6;
-      ctx.beginPath();
-      ctx.moveTo(ball.x, ball.y);
-      ctx.lineTo(dragTo.x, dragTo.y);
-      ctx.stroke();
+      const dx = dragTo.x - ball.x;
+      const dy = dragTo.y - ball.y;
+      const dist = Math.hypot(dx, dy);
+      const pullPower = dist / MAX_PULL;
+      if (dist > 0.001) {
+        const halfWidth = 1 + pullPower * 4;
+        const px = (-dy / dist) * halfWidth;
+        const py = (dx / dist) * halfWidth;
+        ctx.fillStyle = "rgba(255,255,255,.55)";
+        ctx.beginPath();
+        ctx.moveTo(ball.x, ball.y);
+        ctx.lineTo(dragTo.x + px, dragTo.y + py);
+        ctx.lineTo(dragTo.x - px, dragTo.y - py);
+        ctx.closePath();
+        ctx.fill();
+      }
     }
     ctx.beginPath();
     ctx.fillStyle = "#fff";
@@ -202,9 +210,9 @@ export function mountGolf(container, seed, round, onDone) {
       return; // too soft to count as an aim — try again
     }
     // Hold the aim as a pending shot instead of firing immediately — the
-    // player confirms with the Putt button (or scraps it with Re-aim).
+    // player confirms with the Putt button.
     pending = { x: (dx / MAX_PULL) * SHOT_SPEED, y: (dy / MAX_PULL) * SHOT_SPEED };
-    hint.textContent = "Putt when ready, or re-aim.";
+    hint.textContent = "Putt when ready.";
     actions.classList.remove("hidden");
     draw();
   }
@@ -221,14 +229,6 @@ export function mountGolf(container, seed, round, onDone) {
   function onAction(e) {
     const btn = e.target.closest("[data-golf]");
     if (!btn) return;
-    if (btn.dataset.golf === "reaim") {
-      pending = null;
-      dragTo = null;
-      actions.classList.add("hidden");
-      hint.textContent = "Drag back from the ball, then let go to aim.";
-      draw();
-      return;
-    }
     // Putt: hand the confirmed velocity to the physics sim.
     vel = pending;
     pending = null;

@@ -457,6 +457,7 @@ async function creditDuelWin(code, duel, settleClaimId, at) {
         potSeconds: duel.potSeconds || 0,
         doubled: !!duel.doubled,
         doubleLost: !!duel.doubleLost,
+        potLost: !!duel.potLost,
         doubler: duel.doubler || null,
       },
     },

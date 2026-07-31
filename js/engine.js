@@ -96,7 +96,9 @@ function resolveGame(duel, a, b, ctx) {
       const target = 1 + Math.floor(seededFloat(`${duel.id}|${ctx.at}|target`) * 10); // 1-10
       const da = Math.abs(Number(a) - target);
       const db = Math.abs(Number(b) - target);
-      return { verdict: da < db ? 1 : da > db ? -1 : 0, detail: { target } };
+      const verdict = da < db ? 1 : da > db ? -1 : 0;
+      const exact = (verdict > 0 && da === 0) || (verdict < 0 && db === 0);
+      return { verdict, detail: { target, exact } };
     }
     case "coin": {
       // Both sides call heads or tails before the flip. Calling it right wins;
@@ -283,7 +285,11 @@ export function applySettle(duel, ctx) {
   }
 
   const payoutMultiplier =
-    duel.game === "crash" ? crashPayoutMultiplier(detail.crashA, detail.crashB) : 1;
+    duel.game === "crash"
+      ? crashPayoutMultiplier(detail.crashA, detail.crashB)
+      : duel.game === "closest" && detail?.exact
+        ? 5
+        : 1;
 
   return {
     ...duel,
@@ -302,9 +308,10 @@ export function applySettle(duel, ctx) {
 
 /**
  * The coin winner takes their win, or gambles it on one more flip for double.
- * Losing the double-or-nothing flip hands the whole (undoubled) pot to the
- * original loser instead — the winner's win is what's at stake, not a second
- * independent wager.
+ * Losing the double-or-nothing flip doesn't hand the pot to anyone — it's
+ * simply gone, the same as if neither player had ever claimed that time.
+ * `winner`/`loser` are left as-is (the original flip's result), so the
+ * hover/result UI can still say who won the flip that got doubled away.
  *
  * @param duel current duel node
  * @param ctx  { duelId, playerId, choice: "take"|"double", at, settleClaimId }
@@ -333,11 +340,10 @@ export function applyDoubleChoice(duel, ctx) {
   return {
     ...duel,
     status: "resolved",
-    winner: duel.loser,
-    loser: duel.winner,
-    payoutMultiplier: 1,
+    payoutMultiplier: 0,
     doubled: true,
     doubleLost: true,
+    potLost: true,
     doubler: duel.winner,
     resolvedAt: ctx.at,
     settleClaimId: ctx.settleClaimId,

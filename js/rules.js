@@ -102,7 +102,7 @@ export const DUEL_META = {
     label: "Closest guess",
     icon: "🎯",
     color: "#b98cff",
-    rule: "Guess a number from 1–10. Whoever's closest to the secret target wins.",
+    rule: "Guess a number from 1–10. Whoever's closest to the secret target wins. Guess it exactly and you win 5x the pot.",
   },
   coin: {
     label: "Coin flip",
@@ -194,6 +194,7 @@ export const PERIODS = [
   { key: "1h", label: "Last hour", ms: 3600e3 },
   { key: "6h", label: "Last 6 hours", ms: 6 * 3600e3 },
   { key: "1d", label: "Last day", ms: 24 * 3600e3 },
+  { key: "3d", label: "Last 3 days", ms: 3 * 24 * 3600e3 },
   { key: "1w", label: "Last week", ms: 7 * 24 * 3600e3 },
   { key: "1mo", label: "Last month", ms: 30 * 24 * 3600e3 },
   { key: "all", label: "All time", ms: Infinity },

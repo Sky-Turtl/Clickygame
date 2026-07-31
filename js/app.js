@@ -167,16 +167,40 @@ function showScreen(which) {
   }
   window.scrollTo(0, 0);
   if (which === "setup") renderRejoin();
+  if (which === "hub") initHubDashboard();
   if (which === "profile") { renderProfile(); initProfileDashboard(); }
   if (which === "detail") initDetailDashboard();
 }
 
 // --- Box dashboards (desktop drag-to-rearrange + resize, synced to the account) --
+//
+// A dashboard (.box-dashboard) has two zones, stacked vertically:
+//   - a .dash-cols row of 1-3 "columns" (.dash-col), each a vertical stack of
+//     boxes. Dragging a box over a column live-reorders it into that
+//     column's stack (pushing the rest of that column down); dragging past
+//     the outer edge of the first/last column spins up a new one (capped at
+//     DASH_MAX_COLS); a column left empty by a move is pruned back out
+//     (floor of DASH_MIN_COLS).
+//   - a "wide" row below .dash-cols: boxes dragged there (or resized far
+//     enough to the right) go full dashboard width instead of living in a
+//     column.
+// A draggable splitter (.dash-col-split) sits between adjacent columns for
+// horizontal resizing; a "Reset layout" button (.dash-reset) clears the
+// saved layout back to the default.
+// Layout — column contents, widths, which boxes are wide, and any explicit
+// height — is saved locally and, if signed in, to the account.
 
 const DASH_LAYOUT_KEY = "clicky-dashboard-layout-v2";
+const DASH_MIN_COLS = 1;
+const DASH_MAX_COLS = 3;
+const DASH_DEFAULT_COLS = 2;
+const DASH_EDGE_PX = 60; // how far past the outer column edge triggers a new column
+const DASH_MIN_BOX_HEIGHT = 40;
+const DASH_WIDE_DRAG_PX = 0.6; // resize-handle dx, as a fraction of box width, that promotes a box to wide
+
 const dashInited = new Set(); // dash element ids already wired up
 
-/** { profile: [{id, span, height}], detail: [...] } | null while unloaded */
+/** { profile: {cols:[[boxId,...],...], wide:[boxId,...], heights:{boxId:"123px"}}, detail: {...}, hub: {...} } */
 let dashboardLayout = loadLocalDashboardLayout();
 
 function loadLocalDashboardLayout() {
@@ -193,30 +217,189 @@ function saveDashboardLayout() {
   if (account) db.setAccountDashboardLayout(account.uid, dashboardLayout).catch(() => {});
 }
 
+/** Normalizes a saved entry to {cols, wide, heights, colWidths}, migrating the old flat-array shape from before columns existed. */
+function normalizeDashEntry(entry) {
+  if (entry && Array.isArray(entry.cols)) {
+    return {
+      cols: entry.cols.map((c) => [...c]),
+      wide: [...(entry.wide || [])],
+      heights: { ...(entry.heights || {}) },
+      colWidths: [...(entry.colWidths || [])],
+    };
+  }
+  if (Array.isArray(entry)) {
+    const cols = Array.from({ length: DASH_DEFAULT_COLS }, () => []);
+    const heights = {};
+    entry.forEach((e, i) => {
+      cols[i % DASH_DEFAULT_COLS].push(e.id);
+      if (e.height) heights[e.id] = e.height;
+    });
+    return { cols, wide: [], heights, colWidths: [] };
+  }
+  return null;
+}
+
 function captureDashLayout(dash, screenKey) {
-  dashboardLayout[screenKey] = [...dash.children].map((box) => ({
-    id: box.dataset.box,
-    span: box.dataset.span === "2" ? 2 : 1,
-    height: box.style.height || null,
-  }));
+  const colsWrap = dash.querySelector(":scope > .dash-cols");
+  const colEls = colsWrap ? [...colsWrap.querySelectorAll(":scope > .dash-col")] : [];
+  const cols = [];
+  const colWidths = [];
+  for (const col of colEls) {
+    const ids = [...col.querySelectorAll(":scope > .dash-box")].map((b) => b.dataset.box);
+    if (!ids.length) continue;
+    cols.push(ids);
+    colWidths.push(col.dataset.customWidth ? Math.round(col.getBoundingClientRect().width) : null);
+  }
+  const wide = [...dash.querySelectorAll(":scope > .dash-box")].map((b) => b.dataset.box);
+  const heights = {};
+  for (const box of dash.querySelectorAll(".dash-box")) {
+    if (box.style.height) heights[box.dataset.box] = box.style.height;
+  }
+  dashboardLayout[screenKey] = {
+    cols: cols.length || wide.length ? cols : [[...dash.querySelectorAll(".dash-box")].map((b) => b.dataset.box)],
+    wide,
+    heights,
+    colWidths,
+  };
   saveDashboardLayout();
 }
 
+/** Rebuilds a dashboard's .dash-cols/.dash-col wrappers and wide-row placement from saved layout (or a sane default). */
 function applyDashLayout(dash, screenKey) {
-  const saved = dashboardLayout[screenKey];
-  if (!Array.isArray(saved)) return;
-  const boxes = new Map([...dash.children].map((box) => [box.dataset.box, box]));
-  for (const entry of saved) {
-    const box = boxes.get(entry.id);
-    if (!box) continue;
-    dash.appendChild(box);
-    if (entry.span === 2) box.dataset.span = "2";
-    else delete box.dataset.span;
-    if (entry.height) box.style.height = entry.height;
+  const allBoxes = [...dash.querySelectorAll(".dash-box")];
+  const boxIds = allBoxes.map((b) => b.dataset.box);
+  const boxMap = new Map(allBoxes.map((b) => [b.dataset.box, b]));
+
+  let layout = normalizeDashEntry(dashboardLayout[screenKey]);
+  if (!layout) {
+    const cols = Array.from({ length: DASH_DEFAULT_COLS }, () => []);
+    boxIds.forEach((id, i) => cols[i % DASH_DEFAULT_COLS].push(id));
+    layout = { cols, wide: [], heights: {}, colWidths: [] };
+  }
+
+  // Drop stale/duplicate ids, then place any box the layout doesn't know
+  // about yet (a box added in code since the layout was saved) into column 0.
+  const known = new Set(layout.wide.filter((id) => boxMap.has(id)));
+  layout.wide = layout.wide.filter((id) => boxMap.has(id));
+  layout.cols = layout.cols.map((col) =>
+    col.filter((id) => {
+      if (!boxMap.has(id) || known.has(id)) return false;
+      known.add(id);
+      return true;
+    })
+  );
+  for (const id of boxIds) {
+    if (!known.has(id)) { layout.cols[0].push(id); known.add(id); }
+  }
+  layout.cols = layout.cols.filter((c) => c.length);
+  if (!layout.cols.length && !layout.wide.length) layout.cols = [boxIds.slice()];
+  while (layout.cols.length > DASH_MAX_COLS) layout.cols[DASH_MAX_COLS - 1].push(...layout.cols.pop());
+
+  dashboardLayout[screenKey] = layout;
+
+  let colsWrap = dash.querySelector(":scope > .dash-cols");
+  if (!colsWrap) {
+    colsWrap = document.createElement("div");
+    colsWrap.className = "dash-cols";
+    dash.prepend(colsWrap);
+  }
+
+  let cols = [...colsWrap.querySelectorAll(":scope > .dash-col")];
+  while (cols.length < layout.cols.length) {
+    const col = document.createElement("div");
+    col.className = "dash-col";
+    colsWrap.appendChild(col);
+    cols.push(col);
+  }
+  while (cols.length > layout.cols.length) cols.pop().remove();
+
+  layout.cols.forEach((ids, i) => {
+    const width = layout.colWidths && layout.colWidths[i];
+    if (width) {
+      cols[i].style.flex = `0 0 ${width}px`;
+      cols[i].dataset.customWidth = "1";
+    } else {
+      cols[i].style.flex = "";
+      delete cols[i].dataset.customWidth;
+    }
+    for (const id of ids) {
+      const box = boxMap.get(id);
+      cols[i].appendChild(box);
+      if (layout.heights[id]) box.style.height = layout.heights[id];
+    }
+  });
+
+  for (const id of layout.wide) {
+    const box = boxMap.get(id);
+    dash.appendChild(box); // after colsWrap, in saved order
+    if (layout.heights[id]) box.style.height = layout.heights[id];
+  }
+
+  layoutDashSplitters(dash, screenKey);
+}
+
+const DASH_MIN_COL_WIDTH = 160;
+
+/** Rebuilds the draggable splitters between columns so neighboring columns can be resized horizontally. */
+function layoutDashSplitters(dash, screenKey) {
+  const colsWrap = dash.querySelector(":scope > .dash-cols");
+  if (!colsWrap) return;
+  colsWrap.querySelectorAll(":scope > .dash-col-split").forEach((s) => s.remove());
+
+  const cols = [...colsWrap.querySelectorAll(":scope > .dash-col")];
+  for (let i = 0; i < cols.length - 1; i++) {
+    const colA = cols[i];
+    const colB = cols[i + 1];
+    const split = document.createElement("div");
+    split.className = "dash-col-split";
+    colsWrap.insertBefore(split, colB);
+
+    split.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      split.setPointerCapture(e.pointerId);
+      const startX = e.clientX;
+      const startWidthA = colA.getBoundingClientRect().width;
+      const startWidthB = colB.getBoundingClientRect().width;
+
+      const onMove = (ev) => {
+        const dx = ev.clientX - startX;
+        const widthA = Math.max(DASH_MIN_COL_WIDTH, startWidthA + dx);
+        const widthB = Math.max(DASH_MIN_COL_WIDTH, startWidthB - dx);
+        colA.style.flex = `0 0 ${widthA}px`;
+        colA.dataset.customWidth = "1";
+        colB.style.flex = `0 0 ${widthB}px`;
+        colB.dataset.customWidth = "1";
+      };
+      const onUp = (ev) => {
+        split.releasePointerCapture(ev.pointerId);
+        document.removeEventListener("pointermove", onMove);
+        document.removeEventListener("pointerup", onUp);
+        captureDashLayout(dash, screenKey);
+      };
+      document.addEventListener("pointermove", onMove);
+      document.addEventListener("pointerup", onUp);
+    });
   }
 }
 
-const DASH_MIN_BOX_HEIGHT = 40;
+function pruneEmptyDashColumns(dash, screenKey) {
+  const colsWrap = dash.querySelector(":scope > .dash-cols");
+  if (!colsWrap) return;
+  let changed = false;
+  for (const col of [...colsWrap.querySelectorAll(":scope > .dash-col")]) {
+    if (colsWrap.querySelectorAll(":scope > .dash-col").length <= DASH_MIN_COLS) break;
+    if (!col.querySelector(":scope > .dash-box")) { col.remove(); changed = true; }
+  }
+  if (changed && screenKey) layoutDashSplitters(dash, screenKey);
+}
+
+/** Clears a dashboard's saved layout (columns, wide row, heights, widths) back to the default arrangement. */
+function resetDashLayout(dash, screenKey) {
+  delete dashboardLayout[screenKey];
+  saveDashboardLayout();
+  for (const box of dash.querySelectorAll(".dash-box")) box.style.height = "";
+  applyDashLayout(dash, screenKey);
+}
 
 /** Wires up drag-to-rearrange + resize for a dashboard's boxes (desktop only; a no-op on repeat calls). */
 function initDashboard(dashId, screenKey) {
@@ -225,6 +408,16 @@ function initDashboard(dashId, screenKey) {
   applyDashLayout(dash, screenKey);
   if (dashInited.has(dashId)) return;
   dashInited.add(dashId);
+
+  if (!dash.querySelector(":scope > .dash-reset")) {
+    const resetBtn = document.createElement("button");
+    resetBtn.type = "button";
+    resetBtn.className = "dash-reset";
+    resetBtn.title = "Reset layout";
+    resetBtn.textContent = "Reset layout";
+    resetBtn.addEventListener("click", () => resetDashLayout(dash, screenKey));
+    dash.prepend(resetBtn);
+  }
 
   let dragging = null;
 
@@ -261,25 +454,11 @@ function initDashboard(dashId, screenKey) {
     box.addEventListener("dragend", () => {
       box.draggable = false;
       box.classList.remove("dragging");
-      for (const b of dash.querySelectorAll(".dash-box")) b.classList.remove("drag-over");
       dragging = null;
+      const colsWrap = dash.querySelector(":scope > .dash-cols");
+      if (colsWrap) for (const c of colsWrap.querySelectorAll(".dash-col")) c.classList.remove("drag-target");
+      pruneEmptyDashColumns(dash, screenKey);
       captureDashLayout(dash, screenKey);
-    });
-    box.addEventListener("dragover", (e) => {
-      if (!dragging || dragging === box) return;
-      e.preventDefault();
-      box.classList.add("drag-over");
-    });
-    box.addEventListener("dragleave", () => box.classList.remove("drag-over"));
-    box.addEventListener("drop", (e) => {
-      e.preventDefault();
-      box.classList.remove("drag-over");
-      if (!dragging || dragging === box) return;
-      const boxes = [...dash.children];
-      const from = boxes.indexOf(dragging);
-      const to = boxes.indexOf(box);
-      if (from < to) dash.insertBefore(dragging, box.nextSibling);
-      else dash.insertBefore(dragging, box);
     });
 
     resizer.addEventListener("pointerdown", (e) => {
@@ -289,32 +468,109 @@ function initDashboard(dashId, screenKey) {
       const startY = e.clientY;
       const startWidth = box.getBoundingClientRect().width;
       const startHeight = box.getBoundingClientRect().height;
-      const startSpan = box.dataset.span === "2" ? 2 : 1;
 
       const onMove = (ev) => {
-        const dx = ev.clientX - startX;
         const dy = ev.clientY - startY;
-        const newHeight = Math.max(DASH_MIN_BOX_HEIGHT, startHeight + dy);
-        box.style.height = newHeight + "px";
-        const wantsWide = startWidth + dx > startWidth * 1.25;
-        const wantsNarrow = startWidth + dx < startWidth * 0.75;
-        if (startSpan === 1 && wantsWide) box.dataset.span = "2";
-        else if (startSpan === 2 && wantsNarrow) delete box.dataset.span;
+        box.style.height = Math.max(DASH_MIN_BOX_HEIGHT, startHeight + dy) + "px";
+        // Dragging the grip far enough to the right promotes the box to
+        // full-width (the "wide" row below the columns).
+        const dx = ev.clientX - startX;
+        if (dx > startWidth * DASH_WIDE_DRAG_PX && box.parentElement.classList.contains("dash-col")) {
+          dash.appendChild(box);
+        }
       };
       const onUp = (ev) => {
         resizer.releasePointerCapture(ev.pointerId);
         document.removeEventListener("pointermove", onMove);
         document.removeEventListener("pointerup", onUp);
+        pruneEmptyDashColumns(dash, screenKey);
         captureDashLayout(dash, screenKey);
       };
       document.addEventListener("pointermove", onMove);
       document.addEventListener("pointerup", onUp);
     });
   }
+
+  // Delegated on document (not the dash element) because dragover stops
+  // firing on `dash` the instant the pointer crosses its own outer edge —
+  // which is exactly where the "drag past the edge to add a column" check
+  // needs to fire. `dragging` is scoped to this dashboard's closure, so
+  // other dashboards' listeners no-op while this one is idle.
+  document.addEventListener("dragover", (e) => {
+    if (!dragging) return;
+    e.preventDefault();
+
+    const colsWrap = dash.querySelector(":scope > .dash-cols");
+    const cols = colsWrap ? [...colsWrap.querySelectorAll(":scope > .dash-col")] : [];
+    for (const c of cols) c.classList.remove("drag-target");
+
+    const x = e.clientX;
+    const y = e.clientY;
+    const colsRect = colsWrap ? colsWrap.getBoundingClientRect() : null;
+
+    // Below the columns row (or there's no row at all) => full-width "wide" placement.
+    if (!colsRect || y > colsRect.bottom) {
+      const wideBoxes = [...dash.querySelectorAll(":scope > .dash-box")].filter((b) => b !== dragging);
+      const before = wideBoxes.find((b) => y < b.getBoundingClientRect().top + b.getBoundingClientRect().height / 2);
+      if (before) dash.insertBefore(dragging, before);
+      else dash.appendChild(dragging);
+      pruneEmptyDashColumns(dash, screenKey);
+      return;
+    }
+    if (!cols.length) return;
+
+    const firstRect = cols[0].getBoundingClientRect();
+    const lastRect = cols[cols.length - 1].getBoundingClientRect();
+
+    // A drag that lingers past an outer edge fires this handler on every
+    // animation frame. If the edge column already holds nothing but the box
+    // being dragged, it *is* the new column from an earlier frame — reuse it
+    // instead of spinning up another, which would otherwise create/prune a
+    // fresh column every tick and could drop the box mid-thrash.
+    const isSoloDragging = (col) => col.children.length === 1 && col.firstElementChild === dragging;
+
+    let targetCol;
+    if (x < firstRect.left - DASH_EDGE_PX && (cols.length < DASH_MAX_COLS || isSoloDragging(cols[0]))) {
+      if (isSoloDragging(cols[0])) {
+        targetCol = cols[0];
+      } else {
+        targetCol = document.createElement("div");
+        targetCol.className = "dash-col";
+        colsWrap.insertBefore(targetCol, cols[0]);
+        layoutDashSplitters(dash, screenKey);
+      }
+    } else if (x > lastRect.right + DASH_EDGE_PX && (cols.length < DASH_MAX_COLS || isSoloDragging(cols[cols.length - 1]))) {
+      if (isSoloDragging(cols[cols.length - 1])) {
+        targetCol = cols[cols.length - 1];
+      } else {
+        targetCol = document.createElement("div");
+        targetCol.className = "dash-col";
+        colsWrap.appendChild(targetCol);
+        layoutDashSplitters(dash, screenKey);
+      }
+    } else {
+      let bestDist = Infinity;
+      for (const col of cols) {
+        const r = col.getBoundingClientRect();
+        const dist = x < r.left ? r.left - x : x > r.right ? x - r.right : 0;
+        if (dist < bestDist) { bestDist = dist; targetCol = col; }
+      }
+    }
+
+    targetCol.classList.add("drag-target");
+    const siblings = [...targetCol.querySelectorAll(":scope > .dash-box")].filter((b) => b !== dragging);
+    const before = siblings.find((sib) => y < sib.getBoundingClientRect().top + sib.getBoundingClientRect().height / 2);
+    if (before) targetCol.insertBefore(dragging, before);
+    else targetCol.appendChild(dragging);
+
+    pruneEmptyDashColumns(dash, screenKey);
+  });
+  document.addEventListener("drop", (e) => { if (dragging) e.preventDefault(); });
 }
 
 function initProfileDashboard() { initDashboard("profile-dashboard", "profile"); }
 function initDetailDashboard() { initDashboard("detail-dashboard", "detail"); }
+function initHubDashboard() { initDashboard("hub-dashboard", "hub"); }
 
 /** The main screen: the hub once you're in a game, otherwise setup. */
 function goHome() {
@@ -669,6 +925,7 @@ async function onAccountChange(acct) {
   if (serverLayout) {
     dashboardLayout = serverLayout;
     try { localStorage.setItem(DASH_LAYOUT_KEY, JSON.stringify(dashboardLayout)); } catch {}
+    if (!$("screen-hub").classList.contains("hidden")) initHubDashboard();
     if (!$("screen-profile").classList.contains("hidden")) initProfileDashboard();
     if (!$("screen-detail").classList.contains("hidden")) initDetailDashboard();
   } else if (Object.keys(dashboardLayout).length) {
@@ -1254,6 +1511,73 @@ function catchUpWindow(g) {
   };
 }
 
+/**
+ * Recent-activity trend: for each of the last-hour/6h/day windows, how much
+ * each side has actually claimed (not the mathematical max — the real pace).
+ * Used to say whether the current lead looks like it's holding up or not,
+ * as a softer companion to the hard unwinnable-by math in `catchUpWindow`.
+ *
+ * @returns null when there's no opponent, otherwise
+ *   { windows: [{ key, label, mine, theirs, diff }], lead, verdict }
+ *   `verdict` is a short human sentence describing the trend given `lead`.
+ */
+function paceFor(g) {
+  const opp = opponentOf(g);
+  if (!opp) return null;
+
+  const { rows } = totalsFor(g);
+  const mine = rows[myId(g)]?.all.claimed || 0;
+  const theirs = rows[opp.id]?.all.claimed || 0;
+  const lead = mine - theirs;
+
+  // How much more, per that same bucket size, you'd need to be ahead of your
+  // opponent by — sustained for the rest of the game — to erase the gap
+  // exactly by the deadline. That's the deficit spread evenly over the
+  // remaining time. Compared directly against `diff` (what you're actually
+  // up by in that window) to flag when the real margin is falling short.
+  // A rough guide, not the exact math `catchUpWindow` does — it doesn't
+  // account for exactly where 2x windows fall.
+  const remainMs = Math.max(0, g.meta.endsAt - db.now());
+
+  const windows = ["1h", "6h", "1d", "3d"].map((key) => {
+    const p = PERIODS.find((x) => x.key === key);
+    const m = rows[myId(g)]?.[key]?.claimed || 0;
+    const t = rows[opp.id]?.[key]?.claimed || 0;
+    const need = lead !== 0 && remainMs > 0 ? Math.abs(lead) * (p.ms / remainMs) : null;
+    return { key, label: p.label, ms: p.ms, mine: m, theirs: t, diff: m - t, need };
+  });
+
+  // Prefer the freshest window that actually has activity in it, so a quiet
+  // last hour doesn't drown out a real trend visible over the last day.
+  const primary = windows.find((w) => w.mine + w.theirs > 0) || windows[windows.length - 1];
+
+  let verdict;
+  if (lead === 0) {
+    verdict =
+      primary.diff > 0
+        ? "Tied, but you've been pulling ahead recently."
+        : primary.diff < 0
+          ? "Tied, but they've been pulling ahead recently."
+          : "Tied, and pace is even.";
+  } else if (lead > 0) {
+    verdict =
+      primary.diff > 0
+        ? "You're winning and on pace to stay ahead."
+        : primary.diff < 0
+          ? "You're winning, but they're closing the gap — watch this."
+          : "You're winning and holding steady.";
+  } else {
+    verdict =
+      primary.diff > 0
+        ? "You're losing, but you're closing the gap."
+        : primary.diff < 0
+          ? "You're losing and falling further behind."
+          : "You're losing and holding steady — not closing the gap.";
+  }
+
+  return { windows, lead, verdict, forMe: lead < 0 };
+}
+
 /** A duel that still has an undecided outcome — including a coin's double-or-nothing offer. */
 function duelUnsettled(d) {
   return !!d && (d.status === "open" || d.status === "double_offer");
@@ -1749,35 +2073,17 @@ function renderGameList() {
       }
 
       const catchUp = over ? null : catchUpWindow(g);
-      let catchUpHtml = "";
-      if (catchUp) {
-        if (catchUp.final) {
-          catchUpHtml = catchUp.forMe
-            ? `<div class="gc-catchup lost">You can no longer catch up.</div>`
-            : `<div class="gc-catchup safe">${esc(opp?.name || "They")} can no longer catch up.</div>`;
-        } else if (catchUp.forMe) {
-          const urgent = catchUp.leftMs < 3600e3;
-          catchUpHtml = `<div class="gc-catchup ${urgent ? "urgent" : ""}">
-            ${fmtDuration(catchUp.leftMs / 1000)} left to catch up before it's unwinnable</div>`;
-        } else {
-          catchUpHtml = `<div class="gc-catchup safe">
-            ${esc(opp?.name || "They")} have ${fmtDuration(catchUp.leftMs / 1000)} left to catch up</div>`;
-        }
-        if (!catchUp.final) {
-          // Only the leader has a meaningful clinch number — the trailing
-          // side is by definition not yet in a position to lock it in.
-          catchUpHtml += catchUp.forMe
-            ? `<div class="gc-clinch">${esc(opp?.name || "They")} win outright with ${fmtDuration(catchUp.theyNeed)} more</div>`
-            : `<div class="gc-clinch">You win outright with ${fmtDuration(catchUp.youNeed)} more</div>`;
-        }
-      }
+      const catchUpHtml = catchUpHtmlFor(catchUp, opp, remain);
+      const pace = over ? null : paceFor(g);
+      const paceHtml = paceHtmlFor(pace);
 
       // Only these decide whether the DOM needs to be torn down and rebuilt;
       // seconds-precision countdown text is intentionally left out so a
       // rebuild doesn't happen every tick (see note above renderGameList).
       sigKeys.push([
         g.code, over, duel, hot, synced, !!opp, mine, theirs, oppOnline,
-        status ? status.cls : "", catchUp ? `${catchUp.final}|${catchUp.forMe}|${catchUp.leftMs < 3600e3}` : "",
+        status ? status.cls : "", catchUp ? `${catchUp.final}|${catchUp.forMe}` : "",
+        pace ? pace.verdict : "",
       ].join("|"));
 
       const duelBadgeHtml = duel ? duelBadgeFor(g, duel) : "";
@@ -1810,6 +2116,7 @@ function renderGameList() {
             ${over ? "" : `<span class="gc-clock">${fmtDuration(onClock(g))} on the clock</span> · `}<span class="gc-deadline">${deadline}</span>
           </div>
           <div class="gc-catchup-wrap">${catchUpHtml}</div>
+          <div class="gc-pace-wrap">${paceHtml}</div>
         </div>
         <button class="sync-toggle ${synced ? "on" : ""}" data-sync="${esc(g.code)}"
                 title="${synced ? "Synced — clicks land here" : "Not synced"}"
@@ -1877,27 +2184,70 @@ function renderGameList() {
     const catchUpWrap = card.querySelector(".gc-catchup-wrap");
     if (catchUp && catchUpWrap) {
       const opp = opponentOf(g);
-      let catchUpHtml = "";
-      if (catchUp.final) {
-        catchUpHtml = catchUp.forMe
-          ? `<div class="gc-catchup lost">You can no longer catch up.</div>`
-          : `<div class="gc-catchup safe">${esc(opp?.name || "They")} can no longer catch up.</div>`;
-      } else if (catchUp.forMe) {
-        const urgent = catchUp.leftMs < 3600e3;
-        catchUpHtml = `<div class="gc-catchup ${urgent ? "urgent" : ""}">
-          ${fmtDuration(catchUp.leftMs / 1000)} left to catch up before it's unwinnable</div>`;
-      } else {
-        catchUpHtml = `<div class="gc-catchup safe">
-          ${esc(opp?.name || "They")} have ${fmtDuration(catchUp.leftMs / 1000)} left to catch up</div>`;
-      }
-      if (!catchUp.final) {
-        catchUpHtml += catchUp.forMe
-          ? `<div class="gc-clinch">${esc(opp?.name || "They")} win outright with ${fmtDuration(catchUp.theyNeed)} more</div>`
-          : `<div class="gc-clinch">You win outright with ${fmtDuration(catchUp.youNeed)} more</div>`;
-      }
-      catchUpWrap.innerHTML = catchUpHtml;
+      catchUpWrap.innerHTML = catchUpHtmlFor(catchUp, opp, remain);
     }
+
+    const pace = over ? null : paceFor(g);
+    const paceWrap = card.querySelector(".gc-pace-wrap");
+    if (pace && paceWrap) paceWrap.innerHTML = paceHtmlFor(pace);
   });
+}
+
+/**
+ * Countdown to the deadline that used to live here (how long until a lead
+ * becomes mathematically unwinnable) was misleading on its own — it assumes
+ * the trailing player claims literally every remaining second, so it reads
+ * like a hard deadline when it's really a best-case one. Replaced with the
+ * plain time-until-the-game-ends plus the clinch numbers, which are the
+ * activity-based (not time-based) thing worth actually watching.
+ */
+function catchUpHtmlFor(catchUp, opp, remainMs) {
+  if (!catchUp) return "";
+  if (catchUp.final) {
+    return catchUp.forMe
+      ? `<div class="gc-catchup lost">You can no longer catch up.</div>`
+      : `<div class="gc-catchup safe">${esc(opp?.name || "They")} can no longer catch up.</div>`;
+  }
+  let html = `<div class="gc-catchup">${fmtDuration(Math.max(0, remainMs) / 1000)} until the game ends</div>`;
+  // Only the leader has a meaningful clinch number — the trailing side is by
+  // definition not yet in a position to lock it in.
+  html += catchUp.forMe
+    ? `<div class="gc-clinch">${esc(opp?.name || "They")} win outright with ${fmtDuration(catchUp.theyNeed)} more</div>`
+    : `<div class="gc-clinch">You win outright with ${fmtDuration(catchUp.youNeed)} more</div>`;
+  return html;
+}
+
+/** Always "hh:mm:ss" (hours uncapped, e.g. "125:07:00") — fixed width so
+ * pace rows line up in a column, unlike the compact word form. */
+function fmtMmSs(seconds) {
+  const total = Math.max(0, Math.round(Number(seconds) || 0));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+}
+
+function paceHtmlFor(pace) {
+  if (!pace) return "";
+  const rows = pace.windows
+    .map((w) => {
+      const active = w.mine + w.theirs > 0;
+      // Red whenever the margin you're actually up by is falling short of
+      // what you'd need to sustain to close the gap by the deadline —
+      // regardless of whether that margin is nominally positive or negative.
+      const short = w.need != null && w.diff < w.need;
+      const cls = short ? "short" : w.diff > 0 ? "up" : w.diff < 0 ? "down" : "";
+      const text = active ? `${w.diff > 0 ? "+" : w.diff < 0 ? "−" : ""}${fmtMmSs(Math.abs(w.diff))}` : "—";
+      const needText = w.need != null ? ` <span class="gc-pace-need">(need ${fmtMmSs(w.need)})</span>` : "";
+      return `<div class="gc-pace-row"><span class="gc-pace-label">${esc(w.label)}</span><span class="gc-pace-diff ${cls}">${text}${needText}</span></div>`;
+    })
+    .join("");
+  const verdictCls = pace.lead === 0 ? "" : pace.lead > 0 ? "safe" : "lost";
+  return `<div class="gc-pace">
+    <div class="gc-pace-title">Pace</div>
+    ${rows}
+    <div class="gc-pace-verdict ${verdictCls}">${esc(pace.verdict)}</div>
+  </div>`;
 }
 
 // --- Rejoin list (setup screen) ---------------------------------------------
@@ -2365,9 +2715,13 @@ function duelTag(g, row) {
   const meta = DUEL_META[row.game];
   if (!meta) return '<span class="f-tag duel">DUEL</span>';
   const meId = myId(g);
-  const verdict = row.mine
-    ? `<span class="win">You won</span>`
-    : `<span class="loss">${esc(g.players?.[row.by]?.name || "They")} won</span>`;
+  // A lost double-or-nothing leaves `row.by` as whoever won the original
+  // flip, but nobody actually banked the pot — say so instead of "won".
+  const verdict = row.mgDetail?.potLost
+    ? `<span class="loss">${row.mine ? "You" : esc(g.players?.[row.by]?.name || "They")} won the flip, but the double lost — nobody claimed it</span>`
+    : row.mine
+      ? `<span class="win">You won</span>`
+      : `<span class="loss">${esc(g.players?.[row.by]?.name || "They")} won</span>`;
 
   let detailLine = "";
   if (row.mgDetail?.detail || row.mgDetail?.picks) {
@@ -2384,11 +2738,18 @@ function duelTag(g, row) {
 
   const tieNote = row.ties ? `<div class="gc-duel-tip-streak">${row.ties} redraw${row.ties === 1 ? "" : "s"} first</div>` : "";
 
+  let doubleNote = "";
+  if (row.mgDetail?.doubled && !row.mgDetail?.potLost) {
+    const doublerName = row.mgDetail.doubler === meId ? "You" : g.players?.[row.mgDetail.doubler]?.name || "They";
+    doubleNote = `<div class="gc-duel-tip-streak">${doublerName} went double-or-nothing and won.</div>`;
+  }
+
   return `<span class="f-tag duel gc-duel-badge" style="--mg-color:${meta.color}" tabindex="0">
     ${meta.icon} ${esc(meta.label)}
     <div class="gc-duel-tip">
       <div class="gc-duel-tip-record">${verdict}</div>
       ${detailLine}
+      ${doubleNote}
       ${tieNote}
     </div>
   </span>`;
@@ -2441,7 +2802,7 @@ function renderFeed(hostId, g, limit) {
                 <span class="f-who">${esc(who)}</span>
                 <span class="f-amt">${fmtDuration(run.seconds)}</span>
                 ${tags}
-                <span class="f-when">${fmtAgo(db.now() - run.to)}</span>
+                <span class="f-when" data-when="${run.to}"></span>
               </li>`;
             }
 
@@ -2454,7 +2815,7 @@ function renderFeed(hostId, g, limit) {
                   <span class="f-amt">${fmtDuration(i.seconds)}</span>
                   ${i.multiplier > 1 ? '<span class="f-tag x2">2x</span>' : ""}
                   ${i.viaDuel ? (i.game ? duelTag(g, i) : '<span class="f-tag duel">DUEL</span>') : ""}
-                  <span class="f-when">${fmtAgo(db.now() - i.at)}</span>
+                  <span class="f-when" data-when="${i.at}"></span>
                 </li>`
               )
               .join("");
@@ -2467,7 +2828,7 @@ function renderFeed(hostId, g, limit) {
                   <span class="f-amt">${fmtDuration(run.seconds)}</span>
                   <span class="f-count">${run.count} clicks</span>
                   ${tags}
-                  <span class="f-when">${fmtAgo(db.now() - run.to)}</span>
+                  <span class="f-when" data-when="${run.to}"></span>
                 </summary>
                 <ul class="splits">${splits}</ul>
               </details>
@@ -2476,6 +2837,14 @@ function renderFeed(hostId, g, limit) {
           .join("")
       : `<li class="feed-empty">No claims yet.</li>`
   );
+
+  // Patched in place every call (rebuild or not) — baking the "…ago" text
+  // straight into the html would change the string every tick, forcing
+  // setHTML to tear down and rebuild the whole list each time and killing
+  // hover state on anything under the cursor (e.g. the duel tag tooltip).
+  host.querySelectorAll("[data-when]").forEach((el) => {
+    el.textContent = fmtAgo(db.now() - Number(el.dataset.when));
+  });
 }
 
 function wireDetail() {
@@ -2889,7 +3258,7 @@ function renderDuelModal() {
 
         const doubleNote = d.doubled
           ? d.doubleLost
-            ? `<div class="rr-detail">Double-or-nothing gone wrong — the win flipped sides on the extra flip.</div>`
+            ? `<div class="rr-detail">Double-or-nothing gone wrong — the pot's gone, nobody claims it.</div>`
             : `<div class="rr-detail">Doubled it! 🔥</div>`
           : "";
         const timeoutNote = d.timedOut
@@ -2902,7 +3271,15 @@ function renderDuelModal() {
         const oppGolfPath = golfPaths?.[oppId];
         const golfReplayHtml =
           myGolfPath || oppGolfPath ? `<div class="golf-replay" data-el="golf-replay"></div>` : "";
-        const restHtml = `
+        const restHtml = d.potLost
+          ? `
+          <div class="rr-throws">${resultDetailHtml(d, meId, oppId, oppName)}</div>
+          <div class="rr-verdict lost">Nobody takes it</div>
+          <div class="rr-detail">The double-or-nothing flip lost — the pot's gone for good, ${esc(oppName)} gets nothing either.</div>
+          ${timeoutNote}
+          ${doubleNote}
+          ${golfReplayHtml}`
+          : `
           <div class="rr-throws">${resultDetailHtml(d, meId, oppId, oppName)}</div>
           <div class="rr-verdict ${iWon ? "won" : "lost"}">${iWon ? "You take it" : "You lose it"}</div>
           <div class="rr-detail">${
@@ -3152,7 +3529,7 @@ function resultDetailHtml(d, meId, oppId, oppName) {
     case "closest":
       return `You guessed ${esc(String(picks[meId]))} · ${esc(oppName)} guessed ${esc(
         String(picks[oppId])
-      )} · target was ${detail.target}`;
+      )} · target was ${detail.target}${detail.exact ? " · exact match! 5x payout" : ""}`;
     case "coin": {
       const mineCall = picks[meId] === "heads" ? "heads" : "tails";
       const oppCall = picks[oppId] === "heads" ? "heads" : "tails";
