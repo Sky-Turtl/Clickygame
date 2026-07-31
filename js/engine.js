@@ -215,6 +215,12 @@ export function applyClaim(state, ctx) {
     // players have actually clicked "I'm ready" — see applyReactionClear/
     // applyStartReaction, driven by store.checkReactionStart.
     if (game === "reaction") duel.reactionClear = {};
+    // Same idea for crash: it's a real-time race against a shared clock, so
+    // if one side's client mounts it before the other has even loaded this
+    // round, that side's rocket has already been climbing (or busted) by the
+    // time the other one shows up. Gate it on both sides clicking "Ready" —
+    // see applyCrashReady/applyStartCrash, driven by store.checkCrashStart.
+    if (game === "crash") duel.crashReady = {};
     // Tracks the start of the *current* round for timeout purposes — reset on
     // every redraw so a long multi-round duel doesn't get cut off mid-stride.
     duel.roundStartAt = ctx.at;
@@ -284,6 +290,12 @@ export function applySettle(duel, ctx) {
       // another duel in the meantime.
       delete next.goAt;
       next.reactionClear = {};
+    }
+    if (duel.game === "crash") {
+      // Same re-gate for crash's ready-up — a redraw shouldn't let round 2's
+      // rocket start climbing before both sides are actually watching it.
+      delete next.crashStartAt;
+      next.crashReady = {};
     }
     return next;
   }
@@ -425,6 +437,9 @@ export function applyDuelTimeout(state, ctx) {
   // applyStartReaction) — so it can't time out.
   if (duel.game === "reaction" && !duel.goAt) return undefined;
 
+  // Same for crash: it isn't racing yet if both sides haven't hit "Ready".
+  if (duel.game === "crash" && !duel.crashStartAt) return undefined;
+
   const startedAt = Math.max(duel.roundStartAt || duel.createdAt, duel.lastActivityAt || 0);
   const elapsed = ctx.at - startedAt;
   if (elapsed < ctx.timeoutMs) return undefined;
@@ -488,6 +503,30 @@ export function applyStartReaction(duel, ctx) {
   const clear = duel.reactionClear || {};
   if (!clear[duel.challenger] || !clear[duel.defender]) return undefined;
   return { ...duel, goAt: ctx.at + reactionDelay(duel.id, duel.round || 1) };
+}
+
+/**
+ * A player clicked "Ready" for a crash round. One flag per player,
+ * self-reported since only that player's own client can know they've hit the
+ * button (and thus mounted the widget and can see the rocket climb).
+ *
+ * @param duel current duel node
+ * @param ctx  { duelId, playerId }
+ */
+export function applyCrashReady(duel, ctx) {
+  if (!duel || duel.id !== ctx.duelId || duel.status !== "open") return undefined;
+  if (duel.game !== "crash" || duel.crashStartAt) return undefined;
+  if (ctx.playerId !== duel.challenger && ctx.playerId !== duel.defender) return undefined;
+  return { ...duel, crashReady: { ...(duel.crashReady || {}), [ctx.playerId]: true } };
+}
+
+/** Once both sides have reported ready, actually start the shared rocket's clock. */
+export function applyStartCrash(duel, ctx) {
+  if (!duel || duel.id !== ctx.duelId || duel.status !== "open") return undefined;
+  if (duel.game !== "crash" || duel.crashStartAt) return undefined;
+  const ready = duel.crashReady || {};
+  if (!ready[duel.challenger] || !ready[duel.defender]) return undefined;
+  return { ...duel, crashStartAt: ctx.at };
 }
 
 /** A player interacted with the duel UI (typed, dragged, tapped) — pushes the timeout back out. */
