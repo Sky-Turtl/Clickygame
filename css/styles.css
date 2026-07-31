@@ -285,9 +285,9 @@ code { font-family: var(--mono); font-size: .92em; background: rgba(255,255,255,
   transition: transform .08s, filter .15s;
   box-shadow: 0 8px 28px rgba(109,139,255,.28);
 }
-.btn-claim:hover:not(:disabled) { filter: brightness(1.08); }
-.btn-claim:active:not(:disabled) { transform: scale(.985); }
-.btn-claim:disabled {
+.btn-claim:hover:not(:disabled):not(.soft-disabled) { filter: brightness(1.08); }
+.btn-claim:active:not(:disabled):not(.soft-disabled) { transform: scale(.985); }
+.btn-claim:disabled, .btn-claim.soft-disabled {
   background: var(--bg-raise-2);
   color: var(--text-faint);
   box-shadow: none;
@@ -993,6 +993,18 @@ textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-
 }
 .modal h2 { margin: 0 0 8px; font-size: 20px; }
 .modal-sub { color: var(--text-dim); font-size: 14px; margin: 0 0 16px; line-height: 1.55; }
+.modal-warn {
+  color: #ffb547;
+  background: rgba(255,181,71,.12);
+  border: 1px solid rgba(255,181,71,.35);
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  padding: 10px 12px;
+  margin: 0 0 12px;
+}
+.modal-warn.hidden { display: none; }
 
 .pot {
   text-align: center;

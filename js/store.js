@@ -45,7 +45,7 @@ import {
   ReCaptchaV3Provider,
 } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app-check.js";
 
-import { DUEL_TIMEOUT_MS, firebaseConfig, MIN_CLAIM_INTERVAL_MS, RECAPTCHA_SITE_KEY, TIE_WINDOW_MS } from "./config.js";
+import { APP_VERSION, DUEL_TIMEOUT_MS, firebaseConfig, MIN_CLAIM_INTERVAL_MS, RECAPTCHA_SITE_KEY, TIE_WINDOW_MS } from "./config.js";
 import { multiplierAt } from "./rules.js";
 import {
   applyClaim,
@@ -332,7 +332,7 @@ async function applyPendingSeed(code, playerId, playerName) {
 export function trackPresence(code, playerId) {
   const r = child(gameRef(code), `presence/${playerId}`);
   onDisconnect(r).set(null);
-  set(r, { online: true, at: serverTimestamp() });
+  set(r, { online: true, at: serverTimestamp(), build: APP_VERSION });
 }
 
 export async function setWebhook(code, webhook) {

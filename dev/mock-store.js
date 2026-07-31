@@ -4,7 +4,7 @@
 // opponent so the duel flow can be exercised solo. Nothing here ships to the
 // real game — the import map in dev/index.html swaps it in.
 
-import { DUEL_TIMEOUT_MS, TIE_WINDOW_MS } from "../js/config.js";
+import { APP_VERSION, DUEL_TIMEOUT_MS, TIE_WINDOW_MS } from "../js/config.js";
 import { multiplierAt } from "../js/rules.js";
 import {
   applyClaim,
@@ -175,7 +175,7 @@ export async function joinGame({ code, player }) {
 
 export function trackPresence(code, playerId) {
   const game = g(code);
-  game.presence[playerId] = { online: true, at: now() };
+  game.presence[playerId] = { online: true, at: now(), build: APP_VERSION };
   emitAll(code);
 }
 
