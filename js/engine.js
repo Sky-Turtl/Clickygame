@@ -50,14 +50,19 @@ function pickGame(duelId) {
  * and busts at a random point, shaped like a real crash game rather than a
  * flat random number. A small slice of runs bust instantly at 1.00x; the
  * rest are drawn through 1/(1-x), the standard crash-curve distribution —
- * most land low (1-3x), with a long, increasingly rare tail toward 100x.
+ * most land low (1-3x), with a long tail that's uncapped (P(hit X or higher)
+ * ~ 1/X) rather than topping out at some fixed ceiling — a 1000x+ run is
+ * exponentially rarer than a 100x one, not impossible. MAX_CRASH_POINT only
+ * guards the float math at the extreme tail (remapped landing so close to 1
+ * that 1/(1-remapped) would overflow toward Infinity), not a real gameplay cap.
  */
+const MAX_CRASH_POINT = 1e6;
 function generateCrashPoint(seed) {
   const u = seededFloat(seed);
   const INSTANT_BUST_CHANCE = 0.04;
   if (u < INSTANT_BUST_CHANCE) return 1;
   const remapped = (u - INSTANT_BUST_CHANCE) / (1 - INSTANT_BUST_CHANCE);
-  const point = 1 / (1 - remapped * 0.99);
+  const point = Math.min(MAX_CRASH_POINT, 1 / (1 - remapped));
   return Math.round(point * 100) / 100;
 }
 
