@@ -3660,6 +3660,8 @@ function mountCrash(container, duelId, round, roundStartAt, onDone) {
   const bustAtMs = crashElapsedForMultiplier(bustPoint);
   let done = false;
 
+  console.log(`[crash] max cashout multiplier=${bustPoint.toFixed(2)}x`);
+
   container.innerHTML = `
     <div class="crash-live-stage"><div class="crash-live-face">📈 1.00x</div></div>
     <button type="button" class="btn btn-primary duel-tap" data-crash-cashout>Cash out</button>`;
