@@ -55,7 +55,6 @@ import {
   applyDuelTimeout,
   applyReactionClear,
   applySettle,
-  applyStartCrash,
   applyStartReaction,
   applyThrow,
 } from "./engine.js";
@@ -546,40 +545,29 @@ export async function checkReactionStart(code, duelId, playerId, iAmClear) {
 }
 
 /**
- * A player clicked "Ready" on a crash duel. Reports their side ready,
- * then — if that makes both sides ready — starts the shared rocket's clock.
+ * A player clicked "Ready" on a crash duel. Starts *their own* run's clock
+ * immediately — crash doesn't need both sides watching the same instant, so
+ * there's no handshake to wait on, unlike reaction's synchronized countdown.
  *
- * @returns the committed duel (whether or not it actually started), or null.
+ * @returns the committed duel, or null.
  */
 export async function checkCrashStart(code, duelId, playerId) {
-  const readyResult = await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>
-    applyCrashReady(duel, { duelId, playerId })
+  const result = await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>
+    applyCrashReady(duel, { duelId, playerId, at: now() })
   );
-  if (!readyResult.committed) return null;
-
-  const startResult = await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>
-    applyStartCrash(duel, { duelId, at: now() })
-  );
-  const duel = (startResult.committed ? startResult.snapshot.val() : readyResult.snapshot.val()) || null;
-  return duel;
+  return result.committed ? result.snapshot.val() : null;
 }
 
 /**
- * Safety net for checkReactionStart/checkCrashStart's race: retries starting
- * the round's clock with no ready-flag write of its own, just in case both
- * players' own start-attempts landed before the other's flag had propagated.
- * A no-op transaction (aborts via applyStart*'s own guards) if either side
- * still isn't actually ready.
+ * Safety net for checkReactionStart's race: retries starting the round's
+ * clock with no ready-flag write of its own, just in case both players' own
+ * start-attempts landed before the other's flag had propagated. A no-op
+ * transaction (aborts via applyStartReaction's own guard) if either side
+ * still isn't actually clear.
  */
 export async function retryReactionStart(code, duelId) {
   await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>
     applyStartReaction(duel, { duelId, at: now() })
-  );
-}
-
-export async function retryCrashStart(code, duelId) {
-  await syncedTransaction(child(gameRef(code), "state/duel"), (duel) =>
-    applyStartCrash(duel, { duelId, at: now() })
   );
 }
 

@@ -1917,9 +1917,9 @@ async function markReactionReady(code, duelId, playerId) {
 }
 
 /**
- * A player clicked "Ready" on a crash duel. Reports their side ready and, if
- * that makes both sides ready, starts the shared rocket's clock (see
- * engine.applyCrashReady/applyStartCrash, driven by db.checkCrashStart).
+ * A player clicked "Ready" on a crash duel. Starts their own run's clock
+ * immediately — no need to wait on the other side (see engine.applyCrashReady,
+ * driven by db.checkCrashStart).
  */
 async function markCrashReady(code, duelId, playerId) {
   await db.checkCrashStart(code, duelId, playerId);
@@ -1946,24 +1946,23 @@ function checkDuelExpiry(g) {
 }
 
 /**
- * Both reaction's "I'm ready" and crash's "Ready" gate their round's clock on
- * both sides flagging in, and each side's own click races a follow-up
- * transaction to actually start the clock once both flags are set. If both
- * players click within the same instant, each one's follow-up can land
- * before the *other* player's flag has propagated to the server — both
- * flags end up true, but neither click's start-attempt ever saw both true at
- * once, so the round never starts. This is the safety net: any client that
- * notices both flags are in but the clock still isn't running retries the
- * start on its own, no click required.
+ * Reaction's "I'm ready" gates the round's clock on both sides flagging in,
+ * and each side's own click races a follow-up transaction to actually start
+ * the clock once both flags are set. If both players click within the same
+ * instant, each one's follow-up can land before the *other* player's flag
+ * has propagated to the server — both flags end up true, but neither click's
+ * start-attempt ever saw both true at once, so the round never starts. This
+ * is the safety net: any client that notices both flags are in but the clock
+ * still isn't running retries the start on its own, no click required.
+ *
+ * Crash doesn't need this — each side's "Ready" click starts only their own
+ * run, with no other flag to wait on.
  */
 function checkStalledDuelStart(g) {
   const d = g.state?.duel;
   if (!d || d.status !== "open") return;
   if (d.game === "reaction" && !d.goAt && d.reactionClear?.[d.challenger] && d.reactionClear?.[d.defender]) {
     db.retryReactionStart(g.code, d.id);
-  }
-  if (d.game === "crash" && !d.crashStartAt && d.crashReady?.[d.challenger] && d.crashReady?.[d.defender]) {
-    db.retryCrashStart(g.code, d.id);
   }
 }
 
@@ -3273,7 +3272,7 @@ function renderDuelModal() {
         d.game === "reaction"
           ? `${db.now() >= d.goAt}|${!!d.reactionClear?.[meId]}`
           : d.game === "crash"
-            ? `${!!d.crashStartAt}|${!!d.crashReady?.[meId]}`
+            ? `${!!d.crashStart?.[meId]}`
             : ""
       }`;
       if (pickerEl.dataset.sig !== sig) {
@@ -3286,10 +3285,10 @@ function renderDuelModal() {
               card._submitPick(distance, path);
             });
         }
-        if (d.game === "crash" && d.status === "open" && !iPicked && d.crashStartAt) {
+        if (d.game === "crash" && d.status === "open" && !iPicked && d.crashStart?.[meId]) {
           const mount = pickerEl.querySelector(".crash-mount");
           if (mount)
-            mountCrash(mount, d.id, d.round || 1, d.crashStartAt, (result) => card._submitPick(result));
+            mountCrash(mount, d.id, d.round || 1, d.crashStart[meId], (result) => card._submitPick(result));
         }
       }
     }
@@ -3502,11 +3501,8 @@ function pickerHtml(d, iPicked, meId) {
     case "dice":
       return `<button type="button" class="btn btn-primary duel-tap" data-pick="roll">🎲 Roll the die</button>`;
     case "crash": {
-      if (!d.crashStartAt) {
-        const iAmReady = !!d.crashReady?.[meId];
-        return iAmReady
-          ? `<div class="duel-locked">Ready. Waiting for the other side…</div>`
-          : `<button type="button" class="btn btn-primary duel-tap" data-crash-ready>Ready</button>`;
+      if (!d.crashStart?.[meId]) {
+        return `<button type="button" class="btn btn-primary duel-tap" data-crash-ready>Ready</button>`;
       }
       return `<div class="crash-mount"></div>`;
     }
@@ -3640,13 +3636,12 @@ function crashElapsedForMultiplier(m) {
 /**
  * Mounts a live crash widget into `container`: the multiplier climbs in real
  * time from 1.00x and the player can hit "Cash out" whenever they like to
- * lock in whatever it's showing. It's one rocket, not two — both sides ride
- * the exact same hidden bust point (seeded off duel/round only, no player
- * component) on the exact same timeline (elapsed since `roundStartAt`, the
- * duel's own synced clock reference — see engine.js — rather than each
- * client's own local mount time), so it's a real shared race: cash out too
- * early and you probably lose to whoever held their nerve longer, wait too
- * long and you both bust at essentially the same instant. A bust reports 0,
+ * lock in whatever it's showing. Both players ride the exact same hidden bust
+ * point (seeded off duel/round only, no player component), but each rides it
+ * on their own clock (elapsed since `playerStartAt`, this player's own
+ * `crashStart[playerId]` timestamp — see engine.js — rather than a timeline
+ * shared with the other side): neither sees the other's climb, and whoever
+ * finishes first just waits to see what the other one gets. A bust reports 0,
  * not the bust multiplier: the whole point of busting is that you get
  * nothing, and 0 is what feeds the payout-gap math on the result screen. A
  * bust holds "Busted at X.XXx" on screen for CRASH_BUST_HOLD_MS before
@@ -3655,7 +3650,7 @@ function crashElapsedForMultiplier(m) {
  *
  * @param onDone called once with the final number (0 if busted).
  */
-function mountCrash(container, duelId, round, roundStartAt, onDone) {
+function mountCrash(container, duelId, round, playerStartAt, onDone) {
   const bustPoint = generateCrashPoint(`${duelId}|${round}|crash`);
   const bustAtMs = crashElapsedForMultiplier(bustPoint);
   let done = false;
@@ -3668,7 +3663,7 @@ function mountCrash(container, duelId, round, roundStartAt, onDone) {
   const faceEl = container.querySelector(".crash-live-face");
   const btn = container.querySelector("[data-crash-cashout]");
 
-  const elapsedNow = () => Math.max(0, db.now() - roundStartAt);
+  const elapsedNow = () => Math.max(0, db.now() - playerStartAt);
 
   function finish(result, busted) {
     if (done) return;

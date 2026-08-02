@@ -47,10 +47,11 @@ function pickGame(duelId) {
 
 /**
  * The hidden multiplier at which a crash duel's rocket busts — one shared
- * bust point per (duel, round), not one per player, so both sides are
- * racing the exact same climb (see mountCrash in app.js): it plays out live
- * in real time and either player can cash out whenever they like. Riding it
- * past this point (not clicking in time) is what busts them. Drawn through
+ * bust point per (duel, round), drawn from a seed both players share, but
+ * each side rides their own climb against it on their own clock (see
+ * mountCrash in app.js): it plays out live in real time and either player
+ * can cash out whenever they like. Riding it past this point (not clicking
+ * in time) is what busts them. Drawn through
  * 1/(1-x), the standard crash-curve distribution — most bust points land low
  * (1-3x), with a long tail that's uncapped (P(hit X or higher) ~ 1/X) rather
  * than topping out at some fixed ceiling — a 1000x+ point is exponentially
@@ -143,13 +144,13 @@ function resolveGame(duel, a, b, ctx) {
       return { verdict: da < db ? 1 : da > db ? -1 : 0, detail: { distA: da, distB: db } };
     }
     case "crash": {
-      // Picks are each player's own live result on the one shared rocket
+      // Picks are each player's own result from their own independent run
       // (see mountCrash in app.js): the multiplier they cashed out at, or 0
       // if they rode it past the shared hidden bust point instead of
       // stopping in time. Higher wins; busting means 0 goes straight into
-      // the payout gap below, same as any other result. Both riding it past
-      // the bust point busts them at essentially the same instant — a wash,
-      // same as any other tie — so it redraws.
+      // the payout gap below, same as any other result. Both busting (or
+      // both cashing out at the same multiplier) is a wash, same as any
+      // other tie — so it redraws.
       const crashA = Number(a);
       const crashB = Number(b);
       if (crashA === crashB) return { verdict: 0, detail: { crashA, crashB } };
@@ -215,12 +216,12 @@ export function applyClaim(state, ctx) {
     // players have actually clicked "I'm ready" — see applyReactionClear/
     // applyStartReaction, driven by store.checkReactionStart.
     if (game === "reaction") duel.reactionClear = {};
-    // Same idea for crash: it's a real-time race against a shared clock, so
-    // if one side's client mounts it before the other has even loaded this
-    // round, that side's rocket has already been climbing (or busted) by the
-    // time the other one shows up. Gate it on both sides clicking "Ready" —
-    // see applyCrashReady/applyStartCrash, driven by store.checkCrashStart.
-    if (game === "crash") duel.crashReady = {};
+    // Crash doesn't need the reaction-style ready handshake: each side rides
+    // their own independent climb on their own clock, so a player can start
+    // the instant they click "Ready" without waiting on the other side — see
+    // applyCrashReady, driven by store.checkCrashStart. `crashStart` tracks,
+    // per player, the timestamp their own run began.
+    if (game === "crash") duel.crashStart = {};
     // Tracks the start of the *current* round for timeout purposes — reset on
     // every redraw so a long multi-round duel doesn't get cut off mid-stride.
     duel.roundStartAt = ctx.at;
@@ -292,10 +293,9 @@ export function applySettle(duel, ctx) {
       next.reactionClear = {};
     }
     if (duel.game === "crash") {
-      // Same re-gate for crash's ready-up — a redraw shouldn't let round 2's
-      // rocket start climbing before both sides are actually watching it.
-      delete next.crashStartAt;
-      next.crashReady = {};
+      // Same re-gate for crash's ready-up — a redraw shouldn't carry either
+      // side's run from round 1 into round 2; both need to hit "Ready" again.
+      next.crashStart = {};
     }
     return next;
   }
@@ -385,12 +385,10 @@ export function applyThrow(duel, { duelId, playerId, choice, path }) {
   if (!duel || duel.id !== duelId || duel.status !== "open") return undefined;
   // A stale client (loaded before the ready-up gate shipped, or otherwise
   // out of sync) has no "Ready" button to hold it back, so it could submit a
-  // pick before the round has actually started — crash's clock hasn't begun
-  // (no crashStartAt) or reaction's "go" moment hasn't fired (no goAt). Reject
-  // it here so the round can't get stuck waiting on a ready flag that a throw
-  // has already bypassed (see the "still open" checkStalledDuelStart/
-  // checkDuelTimeout guards, which both refuse to touch an un-started round).
-  if (duel.game === "crash" && !duel.crashStartAt) return undefined;
+  // pick before the round has actually started for that player — crash's own
+  // clock hasn't begun (no crashStart[playerId]) or reaction's "go" moment
+  // hasn't fired (no goAt). Reject it here so a throw can't bypass the gate.
+  if (duel.game === "crash" && !duel.crashStart?.[playerId]) return undefined;
   if (duel.game === "reaction" && !duel.goAt) return undefined;
   const next = { ...duel, picks: { ...(duel.picks || {}), [playerId]: choice } };
   if (duel.game === "golf" && path) {
@@ -445,9 +443,6 @@ export function applyDuelTimeout(state, ctx) {
   // it's still waiting on both sides to clear their other duels (see
   // applyStartReaction) — so it can't time out.
   if (duel.game === "reaction" && !duel.goAt) return undefined;
-
-  // Same for crash: it isn't racing yet if both sides haven't hit "Ready".
-  if (duel.game === "crash" && !duel.crashStartAt) return undefined;
 
   const startedAt = Math.max(duel.roundStartAt || duel.createdAt, duel.lastActivityAt || 0);
   const elapsed = ctx.at - startedAt;
@@ -515,27 +510,20 @@ export function applyStartReaction(duel, ctx) {
 }
 
 /**
- * A player clicked "Ready" for a crash round. One flag per player,
- * self-reported since only that player's own client can know they've hit the
- * button (and thus mounted the widget and can see the rocket climb).
+ * A player clicked "Ready" for a crash round. Unlike reaction's synchronized
+ * countdown, crash doesn't need both players watching the same instant — each
+ * side rides their own independent climb against the shared hidden bust
+ * point, so a player's own "Ready" click starts *their* clock immediately,
+ * with no need to wait on the other side.
  *
  * @param duel current duel node
- * @param ctx  { duelId, playerId }
+ * @param ctx  { duelId, playerId, at }
  */
 export function applyCrashReady(duel, ctx) {
   if (!duel || duel.id !== ctx.duelId || duel.status !== "open") return undefined;
-  if (duel.game !== "crash" || duel.crashStartAt) return undefined;
+  if (duel.game !== "crash" || duel.crashStart?.[ctx.playerId]) return undefined;
   if (ctx.playerId !== duel.challenger && ctx.playerId !== duel.defender) return undefined;
-  return { ...duel, crashReady: { ...(duel.crashReady || {}), [ctx.playerId]: true } };
-}
-
-/** Once both sides have reported ready, actually start the shared rocket's clock. */
-export function applyStartCrash(duel, ctx) {
-  if (!duel || duel.id !== ctx.duelId || duel.status !== "open") return undefined;
-  if (duel.game !== "crash" || duel.crashStartAt) return undefined;
-  const ready = duel.crashReady || {};
-  if (!ready[duel.challenger] || !ready[duel.defender]) return undefined;
-  return { ...duel, crashStartAt: ctx.at };
+  return { ...duel, crashStart: { ...(duel.crashStart || {}), [ctx.playerId]: ctx.at } };
 }
 
 /** A player interacted with the duel UI (typed, dragged, tapped) — pushes the timeout back out. */
