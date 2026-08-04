@@ -114,16 +114,10 @@ export function mountGolf(container, seed, round, onDone) {
   hint.className = "golf-hint";
   hint.textContent = "Drag back from the ball, then let go to aim.";
   container.appendChild(hint);
-  const actions = document.createElement("div");
-  actions.className = "golf-actions hidden";
-  actions.innerHTML = `
-    <button type="button" class="btn btn-primary" data-golf="putt">Putt</button>`;
-  container.appendChild(actions);
 
   const ctx = canvas.getContext("2d");
   const ball = { x: tee.x, y: tee.y };
   let vel = null; // {x,y} once the shot is in flight
-  let pending = null; // {x,y} confirmed shot velocity, waiting on the Putt button
   let dragging = false;
   let dragTo = null;
   let done = false;
@@ -187,7 +181,7 @@ export function mountGolf(container, seed, round, onDone) {
   }
 
   function onDown(e) {
-    if (vel || pending || done) return;
+    if (vel || done) return;
     dragging = true;
     dragTo = clampPull(pointFromEvent(e));
     canvas.setPointerCapture?.(e.pointerId);
@@ -209,12 +203,12 @@ export function mountGolf(container, seed, round, onDone) {
       draw();
       return; // too soft to count as an aim — try again
     }
-    // Hold the aim as a pending shot instead of firing immediately — the
-    // player confirms with the Putt button.
-    pending = { x: (dx / MAX_PULL) * SHOT_SPEED, y: (dy / MAX_PULL) * SHOT_SPEED };
-    hint.textContent = "Putt when ready.";
-    actions.classList.remove("hidden");
+    // Fires the moment the drag is released — no confirm step.
+    vel = { x: (dx / MAX_PULL) * SHOT_SPEED, y: (dy / MAX_PULL) * SHOT_SPEED };
+    dragTo = null;
+    hint.textContent = "…";
     draw();
+    raf = requestAnimationFrame(tick);
   }
 
   // Move/up listen on window (not just the canvas) so dragging back past the
@@ -225,18 +219,6 @@ export function mountGolf(container, seed, round, onDone) {
   window.addEventListener("pointermove", onMove);
   window.addEventListener("pointerup", onUp);
   window.addEventListener("pointercancel", onUp);
-
-  function onAction(e) {
-    const btn = e.target.closest("[data-golf]");
-    if (!btn) return;
-    // Putt: hand the confirmed velocity to the physics sim.
-    vel = pending;
-    pending = null;
-    actions.classList.add("hidden");
-    hint.textContent = "…";
-    raf = requestAnimationFrame(tick);
-  }
-  actions.addEventListener("click", onAction);
 
   function tick() {
     if (done) return;
@@ -310,7 +292,6 @@ export function mountGolf(container, seed, round, onDone) {
       window.removeEventListener("pointermove", onMove);
       window.removeEventListener("pointerup", onUp);
       window.removeEventListener("pointercancel", onUp);
-      actions.removeEventListener("click", onAction);
     },
   };
 }

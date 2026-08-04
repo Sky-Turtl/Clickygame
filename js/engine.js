@@ -40,7 +40,12 @@ function seededFloat(seed) {
   return mulberry32(hashString(seed))();
 }
 
-function pickGame(duelId) {
+// `roomNextGame` is a synced, per-room override (state.nextGame in the DB —
+// see store.setNextGame): both players in a room can see and set it, so
+// forcing a game is a shared choice rather than one side quietly loading the
+// dice against the other. `forcedGame` above stays local/dev-only.
+function pickGame(duelId, roomNextGame) {
+  if (roomNextGame && DUEL_GAMES.includes(roomNextGame)) return roomNextGame;
   if (forcedGame) return forcedGame;
   return DUEL_GAMES[Math.floor(seededFloat(`${duelId}|game`) * DUEL_GAMES.length)];
 }
@@ -195,7 +200,7 @@ export function applyClaim(state, ctx) {
   // block of time, so nobody banks it until a minigame says so.
   if (last && last.by !== ctx.playerId && gapMs < ctx.tieWindowMs) {
     const gapSeconds = gapMs / 1000;
-    const game = pickGame(ctx.duelId);
+    const game = pickGame(ctx.duelId, state.nextGame);
     const duel = {
       id: ctx.duelId,
       game,

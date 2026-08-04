@@ -36,7 +36,7 @@ import { BUCKETS, bucketOHLC, claimRows, groupRuns, sortRows, suggestBucket } fr
 import { barChart, candleChart, leadArea, legend } from "./charts.js";
 import { buildExport, countdownToClaims, parseImport } from "./importer.js";
 import { mountGolf, mountGolfReplay } from "./golf.js";
-import { setForcedGame, generateCrashPoint } from "./engine.js";
+import { setForcedGame, generateCrashPoint, DUEL_GAMES } from "./engine.js";
 
 const $ = (id) => document.getElementById(id);
 
@@ -102,6 +102,26 @@ let leadStyle = store.get("leadStyle", "area"); // "area" | "candle"
 let bucketKey = store.get("bucketKey", "1h");
 /** Click-to-zoom on the "who's winning" chart: {start, end} in ms, or null for the full view. */
 let leadZoom = null;
+
+/**
+ * Console hook so either player can steer which minigame the next contested
+ * claim settles with — a shared setting (state.nextGame in the DB), visible
+ * and changeable by both sides of a room, not a private edge for one player.
+ * Usage from devtools: clicky.setGame("golf"), clicky.setGame("random"),
+ * clicky.games to list valid names. Defaults to whichever game is open on
+ * the detail screen; pass a code explicitly for a game not currently open.
+ */
+globalThis.clicky = {
+  games: DUEL_GAMES,
+  async setGame(game, code = currentDetail) {
+    if (!code || !games.has(code)) {
+      console.warn("[clicky] open a game first (or pass its code), e.g. clicky.setGame('golf', 'ABCD')");
+      return;
+    }
+    const value = await db.setNextGame(code, game);
+    console.log(`[clicky] next duel in ${code} will be: ${value || "random"}`);
+  },
+};
 
 // --- Boot -------------------------------------------------------------------
 

@@ -16,6 +16,7 @@ import {
   applySettle,
   applyStartReaction,
   applyThrow,
+  DUEL_GAMES,
   generateCrashPoint,
   getForcedGame,
 } from "../js/engine.js";
@@ -195,6 +196,13 @@ export function watchGame(code, cb) {
   game.subs.add(cb);
   queueMicrotask(() => emitAll(code));
   return () => game.subs.delete(cb);
+}
+
+export async function setNextGame(code, game) {
+  const value = DUEL_GAMES.includes(game) ? game : null;
+  g(code).state.nextGame = value;
+  emitAll(code);
+  return value;
 }
 
 export async function claim(code, playerId) {
