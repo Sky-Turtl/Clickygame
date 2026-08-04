@@ -57,6 +57,7 @@ import {
   applySettle,
   applyStartReaction,
   applyThrow,
+  DUEL_GAMES,
 } from "./engine.js";
 
 let db = null;
@@ -422,6 +423,19 @@ export async function claim(code, playerId) {
 
   // Someone else's write landed on top of ours between commit and read.
   return { outcome: "superseded" };
+}
+
+/**
+ * Sets (or clears) which minigame the next contested claim in this room
+ * settles with. Lives on state.nextGame, so it's visible to and settable by
+ * both players — a shared choice, not one side quietly loading the dice
+ * against the other (see engine.pickGame). Pass null/"random" to go back to
+ * the normal random pick.
+ */
+export async function setNextGame(code, game) {
+  const value = DUEL_GAMES.includes(game) ? game : null;
+  await set(child(gameRef(code), "state/nextGame"), value);
+  return value;
 }
 
 // --- Duels ------------------------------------------------------------------
