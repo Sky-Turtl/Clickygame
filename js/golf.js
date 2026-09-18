@@ -139,7 +139,7 @@ export function mountGolf(container, seed, round, onDone) {
       ctx.arc(o.x, o.y, OBSTACLE_R, 0, Math.PI * 2);
       ctx.fill();
     }
-    if ((dragging || pending) && dragTo) {
+    if (dragging && dragTo) {
       const dx = dragTo.x - ball.x;
       const dy = dragTo.y - ball.y;
       const dist = Math.hypot(dx, dy);
@@ -161,6 +161,9 @@ export function mountGolf(container, seed, round, onDone) {
     ctx.fillStyle = "#fff";
     ctx.arc(ball.x, ball.y, BALL_R, 0, Math.PI * 2);
     ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = "rgba(6,16,10,.8)";
+    ctx.stroke();
   }
 
   function pointFromEvent(e) {
@@ -195,6 +198,10 @@ export function mountGolf(container, seed, round, onDone) {
   function onUp() {
     if (!dragging) return;
     dragging = false;
+    if (!dragTo) {
+      draw();
+      return;
+    }
     const dx = ball.x - dragTo.x; // launches AWAY from the pull, like a slingshot
     const dy = ball.y - dragTo.y;
     const power = Math.hypot(dx, dy) / MAX_PULL;
