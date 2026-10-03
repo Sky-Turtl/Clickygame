@@ -745,3 +745,27 @@ export async function getAccountDashboardLayout(uid) {
 export function setAccountDashboardLayout(uid, layout) {
   return set(child(accountRef(uid), "dashboardLayout"), layout);
 }
+
+/** Admin escape hatch: void the open duel right now, no timeout required. */
+export async function voidDuel(code) {
+  const result = await syncedTransaction(child(gameRef(code), "state"), (state) => {
+    const duel = state?.duel;
+    if (!duel) return undefined;
+    return {
+      ...state,
+      lastClaimAt: duel.createdAt - duel.gapMs,
+      lastClaim: null,
+      duel: null,
+      voidedClaimId: duel.disputedClaimId,
+    };
+  });
+  if (!result.committed) return null;
+  const voidedId = (result.snapshot.val() || {}).voidedClaimId;
+  if (voidedId) {
+    await update(gameRef(code), {
+      [`claims/${voidedId}/status`]: "void",
+      "state/voidedClaimId": null,
+    });
+  }
+  return { voided: true };
+}
