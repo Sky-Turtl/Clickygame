@@ -40,12 +40,7 @@ function seededFloat(seed) {
   return mulberry32(hashString(seed))();
 }
 
-// `roomNextGame` is a synced, per-room override (state.nextGame in the DB —
-// see store.setNextGame): both players in a room can see and set it, so
-// forcing a game is a shared choice rather than one side quietly loading the
-// dice against the other. `forcedGame` above stays local/dev-only.
-function pickGame(duelId, roomNextGame) {
-  if (roomNextGame && DUEL_GAMES.includes(roomNextGame)) return roomNextGame;
+function pickGame(duelId) {
   if (forcedGame) return forcedGame;
   return DUEL_GAMES[Math.floor(seededFloat(`${duelId}|game`) * DUEL_GAMES.length)];
 }
@@ -200,7 +195,7 @@ export function applyClaim(state, ctx) {
   // block of time, so nobody banks it until a minigame says so.
   if (last && last.by !== ctx.playerId && gapMs < ctx.tieWindowMs) {
     const gapSeconds = gapMs / 1000;
-    const game = pickGame(ctx.duelId, state.nextGame);
+    const game = pickGame(ctx.duelId);
     const duel = {
       id: ctx.duelId,
       game,
@@ -444,24 +439,39 @@ export function applyDuelTimeout(state, ctx) {
 
   if (duel.status !== "open") return undefined;
 
-  // A reaction round that hasn't been given its goAt yet isn't running —
-  // it's still waiting on both sides to clear their other duels (see
-  // applyStartReaction) — so it can't time out.
-  if (duel.game === "reaction" && !duel.goAt) return undefined;
-
   const startedAt = Math.max(duel.roundStartAt || duel.createdAt, duel.lastActivityAt || 0);
   const elapsed = ctx.at - startedAt;
   if (elapsed < ctx.timeoutMs) return undefined;
 
   const picks = duel.picks || {};
-  const aResponded = picks[duel.challenger] !== undefined && picks[duel.challenger] !== null;
-  const bResponded = picks[duel.defender] !== undefined && picks[duel.defender] !== null;
+  const has = (v) => v !== undefined && v !== null;
+  // Reaction and crash both have a ready-up step before any pick can exist
+  // (reaction's goAt is only set once BOTH sides are clear; crash's pick is
+  // rejected until that player has a crashStart). If the other side never
+  // readies, the round can never start, so nobody can ever pick. Clicking
+  // "ready" therefore counts as responding — otherwise the one player who did
+  // show up is stuck waiting forever on someone who left.
+  const engaged = (id) => {
+    if (has(picks[id])) return true;
+    if (duel.game === "reaction" && !duel.goAt) return !!duel.reactionClear?.[id];
+    if (duel.game === "crash") return !!duel.crashStart?.[id];
+    return false;
+  };
+  const aResponded = engaged(duel.challenger);
+  const bResponded = engaged(duel.defender);
 
-  if (aResponded && bResponded) return undefined; // already settleable — let applySettle handle it
+  // Both engaged *and* both actually picked: already settleable — let applySettle handle it.
+  // (Both engaged but a pick is still missing — e.g. someone readied, then walked
+  // away mid-round — falls through and is decided by who actually picked.)
+  if (has(picks[duel.challenger]) && has(picks[duel.defender])) return undefined;
 
-  if (aResponded || bResponded) {
-    const winner = aResponded ? duel.challenger : duel.defender;
-    const loser = aResponded ? duel.defender : duel.challenger;
+  // Both engaged but only one picked: the one who finished wins.
+  const aWins = aResponded && bResponded ? has(picks[duel.challenger]) : aResponded;
+  // Both readied but neither finished: no winner to name — fall through to void.
+  const bothStalled = aResponded && bResponded && !has(picks[duel.challenger]) && !has(picks[duel.defender]);
+  if ((aResponded || bResponded) && !bothStalled) {
+    const winner = aWins ? duel.challenger : duel.defender;
+    const loser = aWins ? duel.defender : duel.challenger;
     return {
       ...state,
       duel: {
