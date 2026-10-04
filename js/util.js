@@ -132,3 +132,13 @@ export function utcHourToLocalRange(dayKey, utcHour) {
     String(dt.getHours()).padStart(2, "0") + ":" + String(dt.getMinutes()).padStart(2, "0");
   return `${t(start)}–${t(end)}`;
 }
+
+/** Local-time label for a 1-hour window starting at `startMs`: "Sat, Aug 1 · 14:00–15:00". */
+export function fmtWindowRange(startMs) {
+  const start = new Date(startMs);
+  const end = new Date(startMs + 3600000);
+  const t = (dt) =>
+    String(dt.getHours()).padStart(2, "0") + ":" + String(dt.getMinutes()).padStart(2, "0");
+  const day = start.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+  return `${day} · ${t(start)}–${t(end)}`;
+}

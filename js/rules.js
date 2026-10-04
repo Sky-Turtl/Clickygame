@@ -76,6 +76,46 @@ export function windowStatus(gameCode, atMs) {
   };
 }
 
+/**
+ * The 2x windows around a moment, independent of day boundaries: the last
+ * `before` windows that have already ended, the one in progress (if any), and
+ * the next `after` that haven't started. Oldest first.
+ *
+ * @returns {{startMs:number, endMs:number, state:"done"|"live"|"upcoming"}[]}
+ */
+export function windowsAround(gameCode, atMs, before = 2, after = 2) {
+  const HOUR = 3600e3;
+  const DAY = 86400e3;
+  const d = new Date(atMs);
+  const base = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  const startsFor = (dayStartMs) =>
+    doubleHoursFor(gameCode, utcDayKey(dayStartMs)).map((h) => dayStartMs + h * HOUR);
+
+  let live = null;
+  const past = [];
+  // Walk backwards a day at a time (capped, in case windows-per-day is 0).
+  for (let i = 0; i <= 14 && past.length < before; i++) {
+    const starts = startsFor(base - i * DAY).sort((a, b) => b - a);
+    for (const s of starts) {
+      if (s <= atMs && atMs < s + HOUR) live = s;
+      else if (s + HOUR <= atMs && past.length < before) past.push(s);
+    }
+  }
+
+  const next = [];
+  for (let i = 0; i <= 14 && next.length < after; i++) {
+    const starts = startsFor(base + i * DAY).sort((a, b) => a - b);
+    for (const s of starts) if (s > atMs && next.length < after) next.push(s);
+  }
+
+  const mk = (s, state) => ({ startMs: s, endMs: s + HOUR, state });
+  return [
+    ...past.reverse().map((s) => mk(s, "done")),
+    ...(live !== null ? [mk(live, "live")] : []),
+    ...next.map((s) => mk(s, "upcoming")),
+  ];
+}
+
 // --- Rock paper scissors ----------------------------------------------------
 
 export const THROWS = ["rock", "paper", "scissors"];
