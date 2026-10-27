@@ -1559,7 +1559,11 @@ function paceFor(g) {
     const p = PERIODS.find((x) => x.key === key);
     const m = rows[myId(g)]?.[key]?.claimed || 0;
     const t = rows[opp.id]?.[key]?.claimed || 0;
-    const need = lead !== 0 && remainMs > 0 ? Math.abs(lead) * (p.ms / remainMs) : null;
+    // Signed: the margin per window you must hold to still be level at the
+    // deadline. Behind -> positive (you must out-gain them by this much).
+    // Ahead -> negative (a floor: you can lose each window by up to this much
+    // and still hold the lead). `diff < need` is "short" in both cases.
+    const need = lead !== 0 && remainMs > 0 ? -lead * (p.ms / remainMs) : null;
     return { key, label: p.label, ms: p.ms, mine: m, theirs: t, diff: m - t, need };
   });
 
@@ -2295,7 +2299,7 @@ function paceHtmlFor(pace) {
       const short = w.need != null && w.diff < w.need;
       const cls = short ? "short" : w.diff > 0 ? "up" : w.diff < 0 ? "down" : "";
       const text = active ? `${w.diff > 0 ? "+" : w.diff < 0 ? "−" : ""}${fmtMmSs(Math.abs(w.diff))}` : "—";
-      const needText = w.need != null ? ` <span class="gc-pace-need">(need ${fmtMmSs(w.need)})</span>` : "";
+      const needText = w.need != null ? ` <span class="gc-pace-need">(need ${w.need < 0 ? "−" : ""}${fmtMmSs(Math.abs(w.need))})</span>` : "";
       return `<div class="gc-pace-row"><span class="gc-pace-label">${esc(w.label)}</span><span class="gc-pace-diff ${cls}">${text}${needText}</span></div>`;
     })
     .join("");
@@ -3804,4 +3808,4 @@ function wireAccount() {
   $("btn-profile-back").addEventListener("click", goHome);
   $("profile-minigame-filter").addEventListener("change", () => renderProfile());
   $("profile-game-filter").addEventListener("change", () => renderProfile());
-}
+               }
